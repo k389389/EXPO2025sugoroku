@@ -3737,6 +3737,7 @@
         clickDeadlineAt: now + 300,
         displayUntil: now + 2000,
         result: null,
+        resultClaimed: false,
         resultApplied: false
       };
     }).then(() => {
@@ -3782,7 +3783,8 @@
 
   async function handleYoyakuEventSync() {
     const ev = gameState.yoyakuEvent;
-    if (!ev) {
+    if (!ev || ev.resultApplied) {
+      // イベント終了後は、結果画面を再生成しない。
       removeYoyakuEventOverlay();
       return;
     }
@@ -3803,7 +3805,9 @@
     if (ev.resultApplied) return;
 
     const { ref, runTransaction, db } = window.dbRef;
-    const claim = await runTransaction(ref(db, 'gameState/yoyakuEvent/resultApplied'), current => {
+    // 結果表示中に他端末が二重処理しないよう、処理担当だけを1台に確定。
+    // resultApplied は「結果表示終了」のフラグなので、ここでは変更しない。
+    const claim = await runTransaction(ref(db, 'gameState/yoyakuEvent/resultClaimed'), current => {
       if (current === true) return;
       return true;
     }).catch(() => null);
@@ -3821,10 +3825,12 @@
       updateBoardImage();
     }
 
+    // 結果発表も2秒表示してからイベントを完全終了する。
     await new Promise(r => setTimeout(r, 2000));
     removeYoyakuEventOverlay();
 
-    gameState.yoyakuEvent = { ...ev, resultApplied: true };
+    // 共有状態からイベント自体を消す。これで他端末でも結果画面が残らない。
+    gameState.yoyakuEvent = null;
     gameState.turnActionLocked = true;
     syncGameState();
     updateUI();
@@ -5322,14 +5328,14 @@
         );
         await new Promise(r => setTimeout(r, 3000));
         showScreenMessage(
-          `チームで当日予約に挑戦だ‼️<br><span style="font-size:11px;">※挑戦できるのは12マス目に止まったチームだけです</span>`,
+          `チームで当日予約に挑戦だ‼️<br>※予約画面が表示されたら素早くタップ<br>※挑戦できるのは12マス目に止まったチームだけです`,
           2000
         );
         await new Promise(r => setTimeout(r, 2000));
         startYoyakuEvent(teamIndex);
         await new Promise(resolve => {
           const wait = setInterval(() => {
-            if (gameState.yoyakuEvent && gameState.yoyakuEvent.resultApplied) {
+            if (!gameState.yoyakuEvent || gameState.yoyakuEvent.resultApplied) {
               clearInterval(wait);
               resolve();
             }

@@ -3702,12 +3702,10 @@
       && !isSpectator;
 
     if (ev.status === 'active') {
+      // 説明画面の後は、yoyaku.jpg と「ここをタップ‼️」だけを表示。
       overlay.innerHTML = `
-        <div class="yoyaku-event-title">📢 当日予約チャレンジ‼️</div>
-        <div class="yoyaku-event-desc">16:50 オプチャから通知が届く！<br>まもなく17時に電力館、nullダイアログ、ガンダム、いのちの未来の当日予約開放です📢</div>
-        <div class="yoyaku-event-desc"><b>チームで当日予約に挑戦だ‼️</b><br>※予約画面が表示されたら素早くタップ<br>※挑戦できるのは12マス目に止まったチームだけです</div>
         <img class="yoyaku-event-image ${canPress ? '' : 'disabled'}" src="yoyaku.jpg" ${canPress ? 'onclick="pressYoyakuImage()"' : ''} draggable="false">
-        <div style="font-size:11px;color:#ddd;">画像が表示されてから0.3秒以内にタップ！</div>
+        <div class="yoyaku-event-result">ここをタップ‼️</div>
       `;
     } else if (ev.result === 'success') {
       overlay.innerHTML = `
@@ -3825,15 +3823,33 @@
       updateBoardImage();
     }
 
-    // 結果発表も2秒表示してからイベントを完全終了する。
+    // 結果発表は2秒だけ表示し、その後は必ず画面から消す。
     await new Promise(r => setTimeout(r, 2000));
-    removeYoyakuEventOverlay();
 
-    // 共有状態からイベント自体を消す。これで他端末でも結果画面が残らない。
+    // まずローカル画面を即時消去。遅れて届くFirebase更新でも再表示されないようにする。
+    removeYoyakuEventOverlay();
+    hideBoardMessage();
+
+    // yoyakuEventだけをFirebaseから確実に削除する。
+    // gameState全体を書き戻す方式だけにすると、別端末の古い状態で結果画面が復活する可能性がある。
     gameState.yoyakuEvent = null;
     gameState.turnActionLocked = true;
-    syncGameState();
+    try {
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, 1000);
+        set(ref(db, 'gameState/yoyakuEvent'), null).finally(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    } catch (e) {}
+
+    // 結果表示に関するDOMを念のためもう一度完全消去。
+    removeYoyakuEventOverlay();
+    hideBoardMessage();
     updateUI();
+
+    // イベント終了後にだけ次のチームへ進む。
     isMoving = false;
     advanceTurn();
     scheduleCameraForNextTeam(50);
@@ -5328,7 +5344,7 @@
         );
         await new Promise(r => setTimeout(r, 3000));
         showScreenMessage(
-          `チームで当日予約に挑戦だ‼️<br>※予約画面が表示されたら素早くタップ<br>※挑戦できるのは12マス目に止まったチームだけです`,
+          `チームで当日予約に挑戦だ‼️<br>※予約画面が表示されたら素早くタップ`,
           2000
         );
         await new Promise(r => setTimeout(r, 2000));

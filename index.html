@@ -1367,6 +1367,57 @@
         }, i * 55);
       }
     },
+    yoyakuStart: function() {
+      const ctx = getAudioContext();
+      // マス12「当日予約」イベント開始：通知→予約画面をイメージした緊張感のある短い音。
+      [523.25, 659.25, 783.99].forEach((freq, index) => {
+        setTimeout(() => {
+          if (ctx.state === 'closed') return;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime);
+          gain.gain.setValueAtTime(0.12, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.18);
+        }, index * 100);
+      });
+    },
+    yoyakuSuccess: function() {
+      const ctx = getAudioContext();
+      [659.25, 783.99, 1046.50, 1318.51].forEach((freq, index) => {
+        setTimeout(() => {
+          if (ctx.state === 'closed') return;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime);
+          gain.gain.setValueAtTime(0.16, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.35);
+        }, index * 110);
+      });
+    },
+    yoyakuFail: function() {
+      const ctx = getAudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(260, ctx.currentTime);
+      osc.frequency.linearRampToValueAtTime(120, ctx.currentTime + 0.45);
+      gain.gain.setValueAtTime(0.14, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.45);
+    },
     guts: function() {
       const ctx = getAudioContext();
       [392, 523.25, 659.25, 783.99].forEach((freq, index) => {
@@ -3765,6 +3816,7 @@
       gameState.turnActionLocked = true;
       syncGameState();
       renderYoyakuEventOverlay();
+      soundEffect.yoyakuStart();
       // yoyaku.jpg は必ず3秒表示してから結果判定・発表を行う。
       setTimeout(() => finishYoyakuAttempt(), 3000);
     }).catch(() => {});
@@ -3836,6 +3888,11 @@
 
     const teamIndex = Number(ev.teamIndex);
     const success = ev.result === 'success';
+    if (success) {
+      soundEffect.yoyakuSuccess();
+    } else {
+      soundEffect.yoyakuFail();
+    }
     const oldPos = Number(gameState.positions[teamIndex] || 0);
     const newPos = success ? Math.min(totalTiles - 1, oldPos + 2) : oldPos;
 
@@ -4147,35 +4204,66 @@
     }
 
     setTimeout(async () => {
-      // 別の15マス目イベントが始まった後に、古いイベントの後処理が
-      // 新しいイベントを上書きしないよう、イベントIDを確認する。
+      // 結果処理は「イベント終了＋位置更新＋次チームへの交代」を
+      // Firebaseの1回のトランザクションで確定する。
+      // これにより、10人以上の端末から古いgameStateが戻ってきても
+      // 結果表示の再発生や、同じチームでターンが止まることを防ぐ。
       if (String(gameState.kmyakBattleEventId || "") !== eventId) return;
 
-      gameState.activeKmyakBattle = false;
-      gameState.kmyakBattlePhase = "idle";
-      removeKmyakBattleOverlay();
+      const oldPos = Number(gameState.positions[eventTeamIndex] || 0);
+      const goalIndex = totalTiles - 1;
+      const forwardTarget = rank === 1 ? Math.min(goalIndex, oldPos + 2) : oldPos;
+      const { ref, runTransaction, db } = window.dbRef;
 
-      if (rank === 1) {
-        const oldPos = gameState.positions[eventTeamIndex];
-        const goalIndex = totalTiles - 1;
-        const forwardTarget = Math.min(goalIndex, oldPos + 2);
-        if (forwardTarget > oldPos) {
-          await movePieceStepByStep(eventTeamIndex, oldPos, forwardTarget, false);
-          gameState.positions[eventTeamIndex] = forwardTarget;
-          updateBoardImage();
-        }
-      } else if (rank === 4) {
-        gameState.skipTurns[eventTeamIndex] = true;
+      // 移動アニメーションを先に共有。ゲーム状態そのものは下のトランザクションで確定する。
+      if (rank === 1 && forwardTarget > oldPos) {
+        publishSharedMoveEvent(eventTeamIndex, oldPos, forwardTarget, false);
       }
 
-      gameState.kmyakBattleTeamIndex = null;
-      gameState.kmyakBattleResultRank = null;
-      gameState.kmyakBattleResultOwner = null;
-      gameState.kmyakBattleResolved = false;
-      syncGameState();
+      const finalize = await runTransaction(ref(db, 'gameState'), current => {
+        if (!current) return;
+        if (String(current.kmyakBattleEventId || '') !== eventId) return;
+        if (!current.activeKmyakBattle || current.kmyakBattlePhase !== 'result') return;
+
+        const currentTeam = Number(current.currentTeamIndex);
+        const players = getRealTeamPlayers(currentTeam);
+        const playerIndices = Array.isArray(current.playerIndices) ? [...current.playerIndices] : [0,0,0,0];
+        if (players.length > 0) {
+          playerIndices[currentTeam] = (Number(playerIndices[currentTeam] || 0) + 1) % players.length;
+        } else {
+          playerIndices[currentTeam] = 0;
+        }
+
+        const positions = Array.isArray(current.positions) ? [...current.positions] : [0,0,0,0];
+        if (rank === 1) positions[eventTeamIndex] = forwardTarget;
+
+        const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];
+        if (rank === 4) skipTurns[eventTeamIndex] = true;
+
+        return {
+          ...current,
+          positions,
+          skipTurns,
+          playerIndices,
+          currentTeamIndex: (currentTeam + 1) % 4,
+          turnActionLocked: false,
+          turnActionLockedAt: 0,
+          activeKmyakBattle: false,
+          kmyakBattlePhase: 'idle',
+          kmyakBattleTeamIndex: null,
+          kmyakBattleResultRank: null,
+          kmyakBattleResultOwner: null,
+          kmyakBattleResolved: false
+        };
+      }).catch(() => null);
+
+      if (!finalize || !finalize.committed) return;
+
+      gameState = finalize.snapshot.val() || gameState;
+      removeKmyakBattleOverlay();
+      updateBoardImage();
       updateUI();
       isMoving = false;
-      advanceTurn();
       scheduleCameraForNextTeam(50);
     }, 4500);
   }
@@ -5403,6 +5491,9 @@
 
       if (targetPos === 12 && !gameState.isGameOver) {
         isMoving = false;
+        // 12マス目イベント開始をはっきり知らせる効果音。
+        // まず通知画面の表示と同時に鳴らし、iPhone等でも発生タイミングを逃しにくくする。
+        soundEffect.event();
         showScreenMessage(
           `16:50 オプチャから通知が届く！<br>まもなく17時に電力館、nullダイアログ、ガンダム、いのちの未来の当日予約開放です📢`,
           3000

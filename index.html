@@ -680,6 +680,22 @@
       100% { opacity: 0; bottom: calc(100% + 20px); transform: translate(-50%, 0) scale(1.05); }
     }
 
+    /* キノコタイム専用演出：Firebase/チャットには送らず、この端末だけで表示 */
+    .mushroom-burst-float {
+      position: absolute;
+      bottom: -45px;
+      font-size: 30px;
+      pointer-events: none;
+      z-index: 10001;
+      animation: mushroomBurstFloat 1.6s ease-out forwards;
+      will-change: transform, opacity;
+    }
+    @keyframes mushroomBurstFloat {
+      0% { opacity: 0; transform: translate(-50%, 0) scale(.45) rotate(-8deg); }
+      12% { opacity: 1; transform: translate(-50%, -8px) scale(1.05) rotate(5deg); }
+      100% { opacity: 0; transform: translate(calc(-50% + var(--drift-x)), -260px) scale(.9) rotate(var(--rotate)); }
+    }
+
     .side-panel { 
       width: 100%; 
       background: #ffffff; 
@@ -1784,6 +1800,14 @@
     if (!overlay) {
       overlay = document.createElement('div');
       overlay.className = 'mushroom-time-overlay';
+      overlay.innerHTML = `
+        <div class="mushroom-time-title">🍄 キノコターイム！</div>
+        <div class="mushroom-time-desc">5秒間、リアクション🍄を連打！<br>参加者1人あたりの平均で勝負！</div>
+        <div class="mushroom-time-countdown"></div>
+        <button class="mushroom-time-btn" onclick="pressMushroomTime()">🍄</button>
+        <div class="mushroom-time-stats"></div>
+        <div class="mushroom-time-status"></div>
+      `;
       board.appendChild(overlay);
     }
     const mt = gameState.mushroomTime;
@@ -1794,16 +1818,30 @@
     const averages = taps.map((v, i) => counts[i] ? (Number(v) / Number(counts[i])) : 0);
     const myTeam = Number(myTeamIndex);
     const myAverage = Number.isInteger(myTeam) && myTeam >= 0 && myTeam < 4 ? averages[myTeam].toFixed(1) : '0.0';
-    overlay.innerHTML = `
-      <div class="mushroom-time-title">🍄 キノコターイム！</div>
-      <div class="mushroom-time-desc">5秒間、リアクション🍄を連打！<br>参加者1人あたりの平均で勝負！</div>
-      <div class="mushroom-time-countdown">${seconds}</div>
-      <button class="mushroom-time-btn" ${remaining <= 0 ? 'disabled' : ''} onclick="pressMushroomTime()">🍄</button>
-      <div class="mushroom-time-stats">
-        ${teamNames.map((name, i) => `${name}：${Number(taps[i] || 0)}回 ÷ ${Number(counts[i] || 1)}人 = <b>${averages[i].toFixed(1)}</b>`).join('<br>')}
-      </div>
-      <div class="mushroom-time-status">あなたのチーム平均：${myAverage}</div>
-    `;
+
+    overlay.querySelector('.mushroom-time-countdown').textContent = seconds;
+    const button = overlay.querySelector('.mushroom-time-btn');
+    button.disabled = remaining <= 0;
+    overlay.querySelector('.mushroom-time-stats').innerHTML = teamNames.map((name, i) => `${name}：${Number(taps[i] || 0)}回 ÷ ${Number(counts[i] || 1)}人 = <b>${averages[i].toFixed(1)}</b>`).join('<br>');
+    overlay.querySelector('.mushroom-time-status').textContent = `あなたのチーム平均：${myAverage}`;
+  }
+
+  // キノコタイムの視覚演出だけを端末内で行う。Firebaseやチャットには送らない。
+  function showMushroomBurst() {
+    const board = document.getElementById('board');
+    if (!board) return;
+    const active = board.querySelectorAll('.mushroom-burst-float');
+    if (active.length >= 12) {
+      active[0].remove();
+    }
+    const el = document.createElement('div');
+    el.className = 'mushroom-burst-float';
+    el.textContent = '🍄';
+    el.style.left = `${12 + Math.random() * 76}%`;
+    el.style.setProperty('--drift-x', `${-45 + Math.random() * 90}px`);
+    el.style.setProperty('--rotate', `${-20 + Math.random() * 40}deg`);
+    board.appendChild(el);
+    setTimeout(() => el.remove(), 1700);
   }
 
   function removeMushroomTimeOverlay() {
@@ -1877,6 +1915,9 @@
     const { ref, runTransaction, db } = window.dbRef;
     const teamIndex = Number(myTeamIndex);
     if (!Number.isInteger(teamIndex) || teamIndex < 0 || teamIndex >= 4) return;
+
+    // 得点はFirebase、演出はこの端末だけ。処理を完全に分離する。
+    showMushroomBurst();
 
     // 🍄 ルート全体をトランザクション更新して、他端末のset()による
     // カウンター上書きを防ぐ。連打も1回ずつ確実に加算する。
@@ -2703,9 +2744,10 @@
 
   window.sendReaction = function(emoji) {
     // 観覧モードはリアクション表示はできますが、ゲームイベントの得点には参加しません。
-    // キノコターイム中は参加者のみ得点カウントもしつつ、通常のリアクション表示も行う。
+    // キノコターイム中の🍄は「得点＋専用演出」だけ。チャット/Firebaseのchatsには送らない。
     if (emoji === '🍄' && gameState.activeMushroomTime) {
       pressMushroomTime();
+      return;
     }
     if (!myUserName) {
       alert("参加してからリアクションを送ってください！");

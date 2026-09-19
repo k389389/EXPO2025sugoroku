@@ -3705,7 +3705,7 @@
       overlay.innerHTML = `
         <div class="yoyaku-event-title">📢 当日予約チャレンジ‼️</div>
         <div class="yoyaku-event-desc">16:50 オプチャから通知が届く！<br>まもなく17時に電力館、nullダイアログ、ガンダム、いのちの未来の当日予約開放です📢</div>
-        <div class="yoyaku-event-desc"><b>チームで当日予約に挑戦だ‼️</b><br>※挑戦できるのは${teamNames[Number(ev.teamIndex)] || ''}チームだけです</div>
+        <div class="yoyaku-event-desc"><b>チームで当日予約に挑戦だ‼️</b><br>※予約画面が表示されたら素早くタップ<br>※挑戦できるのは12マス目に止まったチームだけです</div>
         <img class="yoyaku-event-image ${canPress ? '' : 'disabled'}" src="yoyaku.jpg" ${canPress ? 'onclick="pressYoyakuImage()"' : ''} draggable="false">
         <div style="font-size:11px;color:#ddd;">画像が表示されてから0.3秒以内にタップ！</div>
       `;
@@ -3743,7 +3743,8 @@
       gameState.turnActionLocked = true;
       syncGameState();
       renderYoyakuEventOverlay();
-      setTimeout(() => finishYoyakuAttempt(), 320);
+      // yoyaku.jpg は必ず2秒表示してから結果判定・発表を行う。
+      setTimeout(() => finishYoyakuAttempt(), 2000);
     }).catch(() => {});
   }
 
@@ -3758,19 +3759,24 @@
       if (!current || current.status !== 'active' || current.result) return;
       if (Number(current.teamIndex) !== Number(myTeamIndex)) return;
       if (Date.now() > Number(current.clickDeadlineAt || 0)) return;
-      return { ...current, status: 'resolved', result: 'success' };
+      // 成功判定だけ先に記録し、結果画面への切り替えは2秒表示後に行う。
+      return { ...current, result: 'success' };
     }).catch(() => {});
   };
 
   function finishYoyakuAttempt() {
     const ev = gameState.yoyakuEvent;
     if (!ev || ev.status !== 'active') return;
-    if (Date.now() < Number(ev.clickDeadlineAt || 0)) return;
+    const displayUntil = Number(ev.displayUntil || (Number(ev.startedAt || 0) + 2000));
+    if (Date.now() < displayUntil) {
+      setTimeout(() => finishYoyakuAttempt(), Math.max(50, displayUntil - Date.now()));
+      return;
+    }
     const { ref, runTransaction, db } = window.dbRef;
     runTransaction(ref(db, 'gameState/yoyakuEvent'), current => {
-      if (!current || current.status !== 'active' || current.result) return;
-      if (Date.now() < Number(current.clickDeadlineAt || 0)) return;
-      return { ...current, status: 'resolved', result: 'fail' };
+      if (!current || current.status !== 'active') return;
+      // 0.3秒以内のタップ結果を、yoyaku.jpgを2秒表示した後に確定する。
+      return { ...current, status: 'resolved', result: current.result === 'success' ? 'success' : 'fail' };
     }).catch(() => {});
   }
 
@@ -3784,7 +3790,14 @@
     renderYoyakuEventOverlay();
 
     if (ev.status === 'active') {
-      if (Date.now() >= Number(ev.clickDeadlineAt || 0)) finishYoyakuAttempt();
+      const displayUntil = Number(ev.displayUntil || (Number(ev.startedAt || 0) + 2000));
+      if (Date.now() >= displayUntil) {
+        finishYoyakuAttempt();
+      } else {
+        setTimeout(() => {
+          if (gameState.yoyakuEvent && gameState.yoyakuEvent.status === 'active') finishYoyakuAttempt();
+        }, Math.max(50, displayUntil - Date.now()));
+      }
       return;
     }
     if (ev.resultApplied) return;

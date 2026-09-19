@@ -1079,7 +1079,7 @@
       <button id="proxy-roll-btn" class="proxy-dice-btn" onclick="rollDiceProxy()">🤖 代理で振る</button>
     </div>
     <div style="margin-top: 6px; text-align: center;">
-      <img src="logo.jpg" alt="管理下の画像" style="width: 100%; max-height: 120px; object-fit: cover; border-radius: 6px; border: 1px solid #ddd;">
+      <img src="logo.jpg" alt="管理下の画像" style="display: block; width: 100%; height: auto; max-width: 100%; object-fit: contain; border-radius: 6px; border: 1px solid #ddd;">
     </div>
   </div>
 </div>
@@ -3697,7 +3697,7 @@
 
     const elapsed = Date.now() - Number(ev.startedAt || 0);
     const canPress = ev.status === 'active'
-      && elapsed <= 300
+      && elapsed <= 500
       && Number(myTeamIndex) === Number(ev.teamIndex)
       && !isSpectator;
 
@@ -3705,7 +3705,7 @@
       // 説明画面の後は、yoyaku.jpg と「ここをタップ‼️」だけを表示。
       overlay.innerHTML = `
         <img class="yoyaku-event-image ${canPress ? '' : 'disabled'}" src="yoyaku.jpg" ${canPress ? 'onclick="pressYoyakuImage()"' : ''} draggable="false">
-        <div class="yoyaku-event-result">ここをタップ‼️</div>
+        <div class="yoyaku-event-result">⬆️ここをタップ‼️</div>
       `;
     } else if (ev.result === 'success') {
       overlay.innerHTML = `
@@ -3732,8 +3732,8 @@
         status: 'active',
         teamIndex: Number(teamIndex),
         startedAt: now,
-        clickDeadlineAt: now + 300,
-        displayUntil: now + 2000,
+        clickDeadlineAt: now + 500,
+        displayUntil: now + 3000,
         result: null,
         resultClaimed: false,
         resultApplied: false
@@ -3742,8 +3742,8 @@
       gameState.turnActionLocked = true;
       syncGameState();
       renderYoyakuEventOverlay();
-      // yoyaku.jpg は必ず2秒表示してから結果判定・発表を行う。
-      setTimeout(() => finishYoyakuAttempt(), 2000);
+      // yoyaku.jpg は必ず3秒表示してから結果判定・発表を行う。
+      setTimeout(() => finishYoyakuAttempt(), 3000);
     }).catch(() => {});
   }
 
@@ -3758,7 +3758,7 @@
       if (!current || current.status !== 'active' || current.result) return;
       if (Number(current.teamIndex) !== Number(myTeamIndex)) return;
       if (Date.now() > Number(current.clickDeadlineAt || 0)) return;
-      // 成功判定だけ先に記録し、結果画面への切り替えは2秒表示後に行う。
+      // 成功判定だけ先に記録し、結果画面への切り替えは3秒表示後に行う。
       return { ...current, result: 'success' };
     }).catch(() => {});
   };
@@ -3766,7 +3766,7 @@
   function finishYoyakuAttempt() {
     const ev = gameState.yoyakuEvent;
     if (!ev || ev.status !== 'active') return;
-    const displayUntil = Number(ev.displayUntil || (Number(ev.startedAt || 0) + 2000));
+    const displayUntil = Number(ev.displayUntil || (Number(ev.startedAt || 0) + 3000));
     if (Date.now() < displayUntil) {
       setTimeout(() => finishYoyakuAttempt(), Math.max(50, displayUntil - Date.now()));
       return;
@@ -3774,7 +3774,7 @@
     const { ref, runTransaction, db } = window.dbRef;
     runTransaction(ref(db, 'gameState/yoyakuEvent'), current => {
       if (!current || current.status !== 'active') return;
-      // 0.3秒以内のタップ結果を、yoyaku.jpgを2秒表示した後に確定する。
+      // 0.5秒以内のタップ結果を、yoyaku.jpgを3秒表示した後に確定する。
       return { ...current, status: 'resolved', result: current.result === 'success' ? 'success' : 'fail' };
     }).catch(() => {});
   }
@@ -3790,7 +3790,7 @@
     renderYoyakuEventOverlay();
 
     if (ev.status === 'active') {
-      const displayUntil = Number(ev.displayUntil || (Number(ev.startedAt || 0) + 2000));
+      const displayUntil = Number(ev.displayUntil || (Number(ev.startedAt || 0) + 3000));
       if (Date.now() >= displayUntil) {
         finishYoyakuAttempt();
       } else {

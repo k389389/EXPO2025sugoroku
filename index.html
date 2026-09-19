@@ -1625,6 +1625,10 @@
     quizUsedIndices: [],
     quizRoundId: 0,
     kmyakBattleTriggered: false,
+    kmyakBattleTriggeredTeams: [false, false, false, false],
+    kmyakBattleTeamIndex: null,
+    kmyakBattleResultRank: null,
+    kmyakBattleResultOwner: null,
     activeLottery: false,
     activeKmyakBattle: false,
     kmyakBattlePhase: "idle",
@@ -2347,12 +2351,20 @@
     scheduleCameraForNextTeam(50);
   }
 
-  function calculateMovementTarget(oldPos, rawTargetPos) {
+  function calculateMovementTarget(oldPos, rawTargetPos, movingTeamIndex = gameState.currentTeamIndex) {
     let target = rawTargetPos;
     for (let step = oldPos + 1; step <= rawTargetPos; step++) {
       if (step === 5 && !gameState.lotteryTriggered) return 5;
       if (step === 10 && !gameState.quizTriggered) return 10;
-      if (step === 15 && !gameState.kmyakBattleTriggered) return 15;
+      const teamAlreadyTriggered15 = Array.isArray(gameState.kmyakBattleTriggeredTeams)
+        ? !!gameState.kmyakBattleTriggeredTeams[Number(movingTeamIndex)]
+        : !!gameState.kmyakBattleTriggered;
+      const triggered15Count = Array.isArray(gameState.kmyakBattleTriggeredTeams)
+        ? gameState.kmyakBattleTriggeredTeams.filter(Boolean).length
+        : (gameState.kmyakBattleTriggered ? 4 : 0);
+      // 15マス目のイベントは、15マス目に最初に到着した3チームだけ。
+      // 4番目のチームは15マス目で止まらず、そのまま通過する。
+      if (step === 15 && !teamAlreadyTriggered15 && triggered15Count < 3) return 15;
     }
     return target;
   }
@@ -2407,6 +2419,10 @@
         if (!Array.isArray(val.quizUsedIndices)) val.quizUsedIndices = [];
         if (val.quizRoundId === undefined) val.quizRoundId = 0;
         if (val.kmyakBattleTriggered === undefined) val.kmyakBattleTriggered = false;
+        if (!Array.isArray(val.kmyakBattleTriggeredTeams)) val.kmyakBattleTriggeredTeams = [false, false, false, false];
+        if (val.kmyakBattleTeamIndex === undefined) val.kmyakBattleTeamIndex = null;
+        if (val.kmyakBattleResultRank === undefined) val.kmyakBattleResultRank = null;
+        if (val.kmyakBattleResultOwner === undefined) val.kmyakBattleResultOwner = null;
         if (val.activeLottery === undefined) val.activeLottery = false;
         if (val.activeKmyakBattle === undefined) val.activeKmyakBattle = false;
         if (val.kmyakBattlePhase === undefined) val.kmyakBattlePhase = "idle";
@@ -3199,6 +3215,10 @@
       quizUsedIndices: [],
       quizRoundId: 0,
       kmyakBattleTriggered: false,
+      kmyakBattleTriggeredTeams: [false, false, false, false],
+      kmyakBattleTeamIndex: null,
+      kmyakBattleResultRank: null,
+      kmyakBattleResultOwner: null,
       activeLottery: false,
       activeKmyakBattle: false,
       kmyakBattlePhase: "idle",
@@ -3308,7 +3328,10 @@
     
     if (currentTeamPos === 5 && !gameState.lotteryTriggered) return false;
     if (currentTeamPos === 10 && !gameState.quizTriggered) return false;
-    if (currentTeamPos === 15 && !gameState.kmyakBattleTriggered) return false;
+    const current15Triggered = Array.isArray(gameState.kmyakBattleTriggeredTeams)
+      ? !!gameState.kmyakBattleTriggeredTeams[currentTeam]
+      : !!gameState.kmyakBattleTriggered;
+    if (currentTeamPos === 15 && !current15Triggered && (Array.isArray(gameState.kmyakBattleTriggeredTeams) ? gameState.kmyakBattleTriggeredTeams.filter(Boolean).length < 3 : !gameState.kmyakBattleTriggered)) return false;
 
     if (myTeamIndex !== gameState.currentTeamIndex) return false;
     
@@ -3988,9 +4011,10 @@
     setTimeout(() => { if (banner) banner.remove(); }, 2000);
   }
 
-  function startKmyakBattleEvent() {
+  function startKmyakBattleEvent(teamIndex = gameState.currentTeamIndex) {
     if (isSpectator) return;
     gameState.activeKmyakBattle = true;
+    gameState.kmyakBattleTeamIndex = Number(teamIndex);
     gameState.kmyakBattlePhase = "countdown";
     gameState.kmyakBattleCountdown = 3;
     gameState.kmyakBattleTimer = 5;
@@ -4070,55 +4094,65 @@
   function resolveKmyakBattleHost() {
     cpuKmyakTapTimers.forEach(t => clearInterval(t));
     cpuKmyakTapTimers = [];
+
+    const eventTeamIndex = Number(gameState.kmyakBattleTeamIndex);
+    if (!Number.isInteger(eventTeamIndex) || eventTeamIndex < 0 || eventTeamIndex > 3) return;
+
     let averages = [0, 0, 0, 0];
     for (let i = 0; i < 4; i++) {
-      const totalTaps = gameState.kmyakTaps[i] || 0;
+      const totalTaps = Number(gameState.kmyakTaps?.[i] || 0);
       const memberCount = Math.max(1, teamPlayers[i].filter(name => !name.includes("募集中")).length);
       averages[i] = totalTaps / memberCount;
     }
 
-    let maxAvg = Math.max(...averages);
-    let winningTeams = [];
-    if (maxAvg > 0) {
-      averages.forEach((avg, idx) => {
-        if (avg === maxAvg) winningTeams.push(idx);
-      });
-    }
+    // 連打数（1人あたり平均）を順位化。完全同率の場合はチーム番号で決める。
+    const ranking = [0, 1, 2, 3].sort((a, b) => {
+      if (averages[b] !== averages[a]) return averages[b] - averages[a];
+      return a - b;
+    });
+    const rank = ranking.indexOf(eventTeamIndex) + 1;
 
     gameState.kmyakBattlePhase = "result";
-    gameState.winningKmyakTeams = winningTeams;
+    gameState.kmyakBattleResultRank = rank;
+    gameState.kmyakBattleResultOwner = eventTeamIndex;
     syncGameState();
 
-    if (winningTeams.length > 0) {
-      let teamNamesStr = winningTeams.map(idx => teamNames[idx]).join("・");
+    const teamName = teamNames[eventTeamIndex];
+    if (rank === 1) {
       soundEffect.goal();
-      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamNamesStr} が平均タップ数 ${maxAvg.toFixed(1)} で勝利！(2マス進む)`);
-    } else {
+      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は連打バトル1位！大混雑を抜け出すことに成功。2マス進む。`);
+    } else if (rank === 4) {
       soundEffect.wrong();
-      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：誰もボタンを押さなかったため、どのチームも進みませんでした。`);
+      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は4位。大混雑を抜け出せなかった。1回休み。`);
+    } else {
+      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は${rank}位。今回はそのままです。`);
     }
 
-    setTimeout(() => {
+    setTimeout(async () => {
       gameState.activeKmyakBattle = false;
       gameState.kmyakBattlePhase = "idle";
+
+      if (rank === 1) {
+        const oldPos = gameState.positions[eventTeamIndex];
+        const goalIndex = totalTiles - 1;
+        const forwardTarget = Math.min(goalIndex, oldPos + 2);
+        if (forwardTarget > oldPos) {
+          await movePieceStepByStep(eventTeamIndex, oldPos, forwardTarget, false);
+          gameState.positions[eventTeamIndex] = forwardTarget;
+          updateBoardImage();
+        }
+      } else if (rank === 4) {
+        gameState.skipTurns[eventTeamIndex] = true;
+      }
+
+      gameState.kmyakBattleTeamIndex = null;
+      gameState.kmyakBattleResultRank = null;
+      gameState.kmyakBattleResultOwner = null;
       syncGameState();
-
-      const goalIndex = totalTiles - 1;
-      let promises = winningTeams.map(tIdx => {
-        const oldPos = gameState.positions[tIdx];
-        const rawTarget = Math.min(goalIndex, oldPos + 2);
-        const forwardTarget = calculateMovementTarget(oldPos, rawTarget);
-        return movePieceStepByStep(tIdx, oldPos, forwardTarget, false).then(() => {
-          gameState.positions[tIdx] = forwardTarget;
-          syncGameState();
-          showSquareMessage(tIdx, forwardTarget);
-        });
-      });
-
-      Promise.all(promises).then(() => {
-        advanceTurn();
-        scheduleCameraForNextTeam(3000);
-      });
+      updateUI();
+      isMoving = false;
+      advanceTurn();
+      scheduleCameraForNextTeam(50);
     }, 4500);
   }
 
@@ -4156,9 +4190,16 @@
         avgTexts.push(`${teamNames[i]}: ${avg.toFixed(1)}回`);
       }
 
-      const winners = (gameState.winningKmyakTeams || []).length > 0 
-        ? gameState.winningKmyakTeams.map(idx => teamNames[idx]).join("・")
-        : "なし（誰も押しませんでした）";
+      const owner = Number(gameState.kmyakBattleResultOwner);
+      const rank = Number(gameState.kmyakBattleResultRank);
+      let resultText = "";
+      if (rank === 1) {
+        resultText = `${teamNames[owner] || ""}：大混雑を抜け出すことに成功。2マス進む。`;
+      } else if (rank === 4) {
+        resultText = `${teamNames[owner] || ""}：大混雑を抜け出せなかった。1回休み。`;
+      } else if (rank === 2 || rank === 3) {
+        resultText = `${teamNames[owner] || ""}：${rank}位。そのままです。`;
+      }
 
       overlay.innerHTML = `
         <div class="kmyak-battle-title">🎉 大混雑脱出連打ゲーム 結果 🎉</div>
@@ -4167,7 +4208,7 @@
           ${avgTexts.join(" | ")}
         </div>
         <div class="kmyak-battle-desc" style="font-size:12px; color:#ffeb3b; font-weight:bold;">
-          ${(gameState.winningKmyakTeams || []).length > 0 ? `勝利チーム: ${winners} (2マス進む)` : `誰も押さなかったため、どのチームも進みません`}
+          ${resultText}
         </div>
       `;
     }
@@ -5505,12 +5546,25 @@
       return;
     }
 
-    if (targetPos === 15 && !gameState.kmyakBattleTriggered) {
-      gameState.kmyakBattleTriggered = true;
-      syncGameState();
-      isMoving = false;
-      startKmyakBattleEvent();
-      return;
+    if (targetPos === 15) {
+      const triggeredTeams = Array.isArray(gameState.kmyakBattleTriggeredTeams)
+        ? gameState.kmyakBattleTriggeredTeams
+        : [false, false, false, false];
+      const triggeredCount = triggeredTeams.filter(Boolean).length;
+      const alreadyTriggered = !!triggeredTeams[teamIndex];
+
+      if (!alreadyTriggered && triggeredCount < 3) {
+        triggeredTeams[teamIndex] = true;
+        gameState.kmyakBattleTriggeredTeams = triggeredTeams;
+        // 旧フラグは互換用に「3チーム到着済み」のときだけtrueにする。
+        gameState.kmyakBattleTriggered = triggeredCount + 1 >= 3;
+        gameState.kmyakBattleTeamIndex = teamIndex;
+        syncGameState();
+        isMoving = false;
+        startKmyakBattleEvent(teamIndex);
+        return;
+      }
+      // 4番目のチームは15マス目でイベントを発生させず、そのままターン終了。
     }
 
     isMoving = false;

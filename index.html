@@ -4089,34 +4089,62 @@
   }
 
   function runKmyakBattleSequence() {
-    const { ref, update, db } = window.dbRef;
+    const { ref, runTransaction, db } = window.dbRef;
+    const eventId = String(gameState.kmyakBattleEventId || '');
+    if (!eventId) return;
 
     let cd = 3;
     const cdInterval = setInterval(() => {
       cd--;
       if (cd > 0) {
-        gameState.kmyakBattleCountdown = cd;
-        update(ref(db, 'gameState'), { kmyakBattleCountdown: cd });
+        // 別端末が結果確定した後に、古いカウントダウンがFirebaseへ
+        // 戻ってしまわないよう、イベントIDとphaseをサーバー側でも確認する。
+        runTransaction(ref(db, 'gameState'), current => {
+          if (!current || String(current.kmyakBattleEventId || '') !== eventId ||
+              !current.activeKmyakBattle || current.kmyakBattlePhase !== 'countdown') return;
+          current.kmyakBattleCountdown = cd;
+          return current;
+        }).catch(() => {});
       } else {
         clearInterval(cdInterval);
-        gameState.kmyakBattlePhase = "battle";
-        gameState.kmyakBattleTimer = 5;
-        update(ref(db, 'gameState'), { kmyakBattlePhase: "battle", kmyakBattleTimer: 5 });
+        runTransaction(ref(db, 'gameState'), current => {
+          if (!current || String(current.kmyakBattleEventId || '') !== eventId ||
+              !current.activeKmyakBattle || current.kmyakBattlePhase !== 'countdown') return;
+          current.kmyakBattlePhase = 'battle';
+          current.kmyakBattleTimer = 5;
+          return current;
+        }).then(result => {
+          if (!result || !result.committed) return;
+          // 結果表示に移っていた場合、この端末の古いタイマーはここで終了。
+          if (String(gameState.kmyakBattleEventId || '') !== eventId ||
+              !gameState.activeKmyakBattle || gameState.kmyakBattlePhase !== 'battle') return;
 
-        soundEffect.event();
-        scheduleCpuKmyakTaps();
+          soundEffect.event();
+          scheduleCpuKmyakTaps();
 
-        let timer = 5;
-        const battleInterval = setInterval(() => {
-          timer--;
-          if (timer > 0) {
-            gameState.kmyakBattleTimer = timer;
-            update(ref(db, 'gameState'), { kmyakBattleTimer: timer });
-          } else {
-            clearInterval(battleInterval);
-            resolveKmyakBattleHost();
-          }
-        }, 1000);
+          let timer = 5;
+          const battleInterval = setInterval(() => {
+            // 他端末が結果処理を確定したら、古いタイマーは一切Firebaseへ書かない。
+            if (String(gameState.kmyakBattleEventId || '') !== eventId ||
+                !gameState.activeKmyakBattle || gameState.kmyakBattlePhase !== 'battle') {
+              clearInterval(battleInterval);
+              return;
+            }
+
+            timer--;
+            if (timer > 0) {
+              runTransaction(ref(db, 'gameState'), current => {
+                if (!current || String(current.kmyakBattleEventId || '') !== eventId ||
+                    !current.activeKmyakBattle || current.kmyakBattlePhase !== 'battle') return;
+                current.kmyakBattleTimer = timer;
+                return current;
+              }).catch(() => {});
+            } else {
+              clearInterval(battleInterval);
+              resolveKmyakBattleHost();
+            }
+          }, 1000);
+        }).catch(() => {});
       }
     }, 1000);
   }
@@ -5304,6 +5332,11 @@
   }
 
   async function executeDiceRoll(options = {}) {
+    // サイコロを押したユーザー操作の中でAudioContextを先に解除しておく。
+    // 12マス目イベントはサイコロ操作から数秒後に始まるため、ここで解除しておかないと
+    // iPhone等でWeb Audioの自動再生制限によりイベント音が無音になることがある。
+    try { getAudioContext().resume(); } catch (e) {}
+
     const isProxyRoll = !!options.proxy;
     const isRecoveryRoll = !!options.recovery;
     const isCpuRoll = !!options.cpu;
@@ -5492,8 +5525,9 @@
       if (targetPos === 12 && !gameState.isGameOver) {
         isMoving = false;
         // 12マス目イベント開始をはっきり知らせる効果音。
-        // まず通知画面の表示と同時に鳴らし、iPhone等でも発生タイミングを逃しにくくする。
+        // サイコロを押した時点でAudioContextを解除し、さらにFirebase経由でも共有する。
         soundEffect.event();
+        publishSharedSound('event');
         showScreenMessage(
           `16:50 オプチャから通知が届く！<br>まもなく17時に電力館、nullダイアログ、ガンダム、いのちの未来の当日予約開放です📢`,
           3000

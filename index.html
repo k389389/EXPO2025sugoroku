@@ -582,6 +582,23 @@
     .kmyak-tap-btn:active { transform: scale(0.95); }
     .kmyak-stats { font-size: 10px; margin-top: 8px; width: 100%; background: rgba(255,255,255,0.1); padding: 6px; border-radius: 8px; }
 
+    /* 📢 12マス目 当日予約チャレンジ */
+    .yoyaku-event-overlay {
+      position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+      z-index:4700; width:min(92%,430px); background:rgba(20,25,35,.98); color:#fff;
+      border:4px solid #ff9800; border-radius:18px; padding:14px; text-align:center;
+      box-shadow:0 10px 35px rgba(0,0,0,.75);
+    }
+    .yoyaku-event-title { font-size:20px; font-weight:900; color:#ffeb3b; margin-bottom:8px; line-height:1.35; }
+    .yoyaku-event-desc { font-size:12px; line-height:1.5; margin-bottom:8px; }
+    .yoyaku-event-image {
+      display:block; width:min(78vw,320px); max-height:230px; object-fit:contain;
+      margin:8px auto; border:3px solid #fff; border-radius:10px;
+      cursor:pointer; touch-action:manipulation; user-select:none;
+    }
+    .yoyaku-event-image.disabled { cursor:default; opacity:.9; }
+    .yoyaku-event-result { font-size:18px; font-weight:900; color:#ffeb3b; line-height:1.4; margin-top:8px; }
+
     /* 🍄 キノコターイム！ */
     .mushroom-time-overlay {
       position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
@@ -1625,7 +1642,8 @@
     turnActionLocked: false,
     turnActionLockedAt: 0,
     activeMushroomTime: false,
-    mushroomTime: null
+    mushroomTime: null,
+    yoyakuEvent: null
   };
 
   let teamPlayers = [[], [], [], []];
@@ -2406,6 +2424,7 @@
         if (val.turnActionLockedAt === undefined) val.turnActionLockedAt = 0;
         if (val.activeMushroomTime === undefined) val.activeMushroomTime = false;
         if (val.mushroomTime === undefined) val.mushroomTime = null;
+        if (val.yoyakuEvent === undefined) val.yoyakuEvent = null;
         if (val.mushroomTimeTurnLocked === undefined) val.mushroomTimeTurnLocked = false;
         if (val.sharedCamera === undefined) val.sharedCamera = null;
         if (val.sharedSound === undefined) val.sharedSound = null;
@@ -2556,6 +2575,8 @@
           }
         }
         handleMyakuNyokkiSync();
+
+        handleYoyakuEventSync();
 
         if (gameState.activeMushroomTime && gameState.mushroomTime) {
           renderMushroomTimeOverlay();
@@ -2743,11 +2764,18 @@
   }
 
   window.sendReaction = function(emoji) {
-    // 観覧モードはリアクション表示はできますが、ゲームイベントの得点には参加しません。
-    // キノコターイム中の🍄は「得点＋専用演出」だけ。チャット/Firebaseのchatsには送らない。
-    if (emoji === '🍄' && gameState.activeMushroomTime) {
-      pressMushroomTime();
-      return;
+    // 🍄はキノコタイムの前後にチャットログへ流さない。
+    // 13マス目到達後のキノコタイム中は得点＋専用演出だけ行い、
+    // 終了処理～負けチームの1マス戻り完了までは完全に無効化する。
+    // ゲーム終了後も🍄をチャット/Firebaseのchatsへ送らない。
+    if (emoji === '🍄') {
+      if (gameState.activeMushroomTime) {
+        pressMushroomTime();
+        return;
+      }
+      if (gameState.mushroomTimeTurnLocked || gameState.isGameOver) {
+        return;
+      }
     }
     if (!myUserName) {
       alert("参加してからリアクションを送ってください！");
@@ -3646,6 +3674,150 @@
     board.appendChild(banner);
 
     setTimeout(() => { if (banner) banner.remove(); }, 1500);
+  }
+
+  function removeYoyakuEventOverlay() {
+    const board = document.getElementById('board');
+    if (!board) return;
+    const overlay = board.querySelector('.yoyaku-event-overlay');
+    if (overlay) overlay.remove();
+  }
+
+  function renderYoyakuEventOverlay() {
+    const board = document.getElementById('board');
+    const ev = gameState.yoyakuEvent;
+    if (!board || !ev) return;
+
+    let overlay = board.querySelector('.yoyaku-event-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'yoyaku-event-overlay';
+      board.appendChild(overlay);
+    }
+
+    const elapsed = Date.now() - Number(ev.startedAt || 0);
+    const canPress = ev.status === 'active'
+      && elapsed <= 300
+      && Number(myTeamIndex) === Number(ev.teamIndex)
+      && !isSpectator;
+
+    if (ev.status === 'active') {
+      overlay.innerHTML = `
+        <div class="yoyaku-event-title">📢 当日予約チャレンジ‼️</div>
+        <div class="yoyaku-event-desc">16:50 オプチャから通知が届く！<br>まもなく17時に電力館、nullダイアログ、ガンダム、いのちの未来の当日予約開放です📢</div>
+        <div class="yoyaku-event-desc"><b>チームで当日予約に挑戦だ‼️</b><br>※挑戦できるのは${teamNames[Number(ev.teamIndex)] || ''}チームだけです</div>
+        <img class="yoyaku-event-image ${canPress ? '' : 'disabled'}" src="yoyaku.jpg" ${canPress ? 'onclick="pressYoyakuImage()"' : ''} draggable="false">
+        <div style="font-size:11px;color:#ddd;">画像が表示されてから0.3秒以内にタップ！</div>
+      `;
+    } else if (ev.result === 'success') {
+      overlay.innerHTML = `
+        <div class="yoyaku-event-title">🎉 当日予約成功‼️</div>
+        <img class="yoyaku-event-image" src="yoyaku2.jpg" draggable="false">
+        <div class="yoyaku-event-result">${teamNames[Number(ev.teamIndex)] || ''}チーム、2マス進みます！</div>
+      `;
+    } else {
+      overlay.innerHTML = `
+        <div class="yoyaku-event-title">⏰ 間に合わなかった！</div>
+        <img class="yoyaku-event-image" src="yoyaku3.jpg" draggable="false">
+        <div class="yoyaku-event-result">コマはそのままです。</div>
+      `;
+    }
+  }
+
+  function startYoyakuEvent(teamIndex) {
+    if (isSpectator || gameState.isGameOver || (gameState.yoyakuEvent && !gameState.yoyakuEvent.resultApplied)) return;
+    const { ref, runTransaction, db } = window.dbRef;
+    const now = Date.now();
+    runTransaction(ref(db, 'gameState/yoyakuEvent'), current => {
+      if (current && !current.resultApplied) return;
+      return {
+        status: 'active',
+        teamIndex: Number(teamIndex),
+        startedAt: now,
+        clickDeadlineAt: now + 300,
+        displayUntil: now + 2000,
+        result: null,
+        resultApplied: false
+      };
+    }).then(() => {
+      gameState.turnActionLocked = true;
+      syncGameState();
+      renderYoyakuEventOverlay();
+      setTimeout(() => finishYoyakuAttempt(), 320);
+    }).catch(() => {});
+  }
+
+  window.pressYoyakuImage = function() {
+    const ev = gameState.yoyakuEvent;
+    if (!ev || ev.status !== 'active' || isSpectator) return;
+    if (Number(myTeamIndex) !== Number(ev.teamIndex)) return;
+    if (Date.now() > Number(ev.clickDeadlineAt || 0)) return;
+
+    const { ref, runTransaction, db } = window.dbRef;
+    runTransaction(ref(db, 'gameState/yoyakuEvent'), current => {
+      if (!current || current.status !== 'active' || current.result) return;
+      if (Number(current.teamIndex) !== Number(myTeamIndex)) return;
+      if (Date.now() > Number(current.clickDeadlineAt || 0)) return;
+      return { ...current, status: 'resolved', result: 'success' };
+    }).catch(() => {});
+  };
+
+  function finishYoyakuAttempt() {
+    const ev = gameState.yoyakuEvent;
+    if (!ev || ev.status !== 'active') return;
+    if (Date.now() < Number(ev.clickDeadlineAt || 0)) return;
+    const { ref, runTransaction, db } = window.dbRef;
+    runTransaction(ref(db, 'gameState/yoyakuEvent'), current => {
+      if (!current || current.status !== 'active' || current.result) return;
+      if (Date.now() < Number(current.clickDeadlineAt || 0)) return;
+      return { ...current, status: 'resolved', result: 'fail' };
+    }).catch(() => {});
+  }
+
+  async function handleYoyakuEventSync() {
+    const ev = gameState.yoyakuEvent;
+    if (!ev) {
+      removeYoyakuEventOverlay();
+      return;
+    }
+
+    renderYoyakuEventOverlay();
+
+    if (ev.status === 'active') {
+      if (Date.now() >= Number(ev.clickDeadlineAt || 0)) finishYoyakuAttempt();
+      return;
+    }
+    if (ev.resultApplied) return;
+
+    const { ref, runTransaction, db } = window.dbRef;
+    const claim = await runTransaction(ref(db, 'gameState/yoyakuEvent/resultApplied'), current => {
+      if (current === true) return;
+      return true;
+    }).catch(() => null);
+    if (!claim || !claim.committed) return;
+
+    const teamIndex = Number(ev.teamIndex);
+    const success = ev.result === 'success';
+    const oldPos = Number(gameState.positions[teamIndex] || 0);
+    const newPos = success ? Math.min(totalTiles - 1, oldPos + 2) : oldPos;
+
+    if (success) {
+      await movePieceStepByStep(teamIndex, oldPos, newPos, false);
+      gameState.positions[teamIndex] = newPos;
+      syncGameState();
+      updateBoardImage();
+    }
+
+    await new Promise(r => setTimeout(r, 2000));
+    removeYoyakuEventOverlay();
+
+    gameState.yoyakuEvent = { ...ev, resultApplied: true };
+    gameState.turnActionLocked = true;
+    syncGameState();
+    updateUI();
+    isMoving = false;
+    advanceTurn();
+    scheduleCameraForNextTeam(50);
   }
 
   function showOpchatAdviceBanner() {
@@ -5087,20 +5259,18 @@
         targetPos = goalIndex;
       }
     } else {
-      const triggerOpchatAdvice = targetPos === 12 && Math.random() < 0.50;
       const triggerProducerMeet = targetPos === 7 && Math.random() < 0.10;
       await movePieceStepByStep(teamIndex, oldPos, targetPos, false);
       gameState.positions[teamIndex] = targetPos;
       syncGameState();
       updateBoardImage();
-      if (!triggerOpchatAdvice && !triggerProducerMeet) {
+      if (!triggerProducerMeet) {
         showSquareMessage(teamIndex, targetPos);
         await waitForSquareMessage(3000);
       }
 
       // マス13のアナウンス後に「キノコターイム！」を開催。
-      // オプチャの50%イベントが発生した場合は、その効果が終わった後に開始する。
-      if ((diceLandedPos === 13 || (triggerOpchatAdvice && targetPos === 13)) && !gameState.activeMushroomTime && !gameState.isGameOver) {
+      if (diceLandedPos === 13 && !gameState.activeMushroomTime && !gameState.isGameOver) {
         isMoving = false;
         startMushroomTimeEvent();
         await new Promise(resolve => {
@@ -5131,38 +5301,31 @@
         return;
       }
 
-      if (triggerOpchatAdvice) {
-        // マス12の通常アナウンスを表示してから、オプチャ効果→マス13→キノコターイム！へ進む。
-        showSquareMessage(teamIndex, 12);
-        await waitForSquareMessage(3000);
-        showOpchatAdviceBanner();
-        pushLog(`✊ ${teamNames[teamIndex]} がマス12で当日予約に成功！1マス進みます！`);
-        await new Promise(r => setTimeout(r, 2200));
-        const effectStartPos = targetPos;
-        const effectTarget = Math.min(goalIndex, effectStartPos + 1);
-        await movePieceStepByStep(teamIndex, effectStartPos, effectTarget, false);
-        gameState.positions[teamIndex] = effectTarget;
-        syncGameState();
-        updateBoardImage();
-        showSquareMessage(teamIndex, effectTarget);
-        await waitForSquareMessage(3000);
-        targetPos = effectTarget;
-        // オプチャイベントでマス13へ進んだ後、キノコターイム！を開始。
-        if (triggerOpchatAdvice && targetPos === 13 && !gameState.activeMushroomTime && !gameState.isGameOver) {
-          isMoving = false;
-          startMushroomTimeEvent();
-          await new Promise(resolve => {
-            const wait = setInterval(() => {
-              if (!gameState.activeMushroomTime && gameState.mushroomTime && gameState.mushroomTime.resultApplied) {
-                clearInterval(wait);
-                resolve();
-              }
-            }, 150);
-            setTimeout(() => { clearInterval(wait); resolve(); }, 10000);
-          });
-          return;
-        }
-      } else if (triggerProducerMeet) {
+      if (targetPos === 12 && !gameState.isGameOver) {
+        isMoving = false;
+        showScreenMessage(
+          `16:50 オプチャから通知が届く！<br>まもなく17時に電力館、nullダイアログ、ガンダム、いのちの未来の当日予約開放です📢`,
+          3000
+        );
+        await new Promise(r => setTimeout(r, 3000));
+        showScreenMessage(
+          `チームで当日予約に挑戦だ‼️<br><span style="font-size:11px;">※挑戦できるのは12マス目に止まったチームだけです</span>`,
+          2000
+        );
+        await new Promise(r => setTimeout(r, 2000));
+        startYoyakuEvent(teamIndex);
+        await new Promise(resolve => {
+          const wait = setInterval(() => {
+            if (gameState.yoyakuEvent && gameState.yoyakuEvent.resultApplied) {
+              clearInterval(wait);
+              resolve();
+            }
+          }, 100);
+          setTimeout(() => { clearInterval(wait); resolve(); }, 10000);
+        });
+        return;
+      }
+      if (triggerProducerMeet) {
         showSignBanner();
         pushLog(`😊 ${teamNames[teamIndex]} がマス7でシグネチャーパビリオンのプロデューサーに遭遇！2マス進みます！`);
         await new Promise(r => setTimeout(r, 2200));

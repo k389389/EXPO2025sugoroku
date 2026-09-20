@@ -702,7 +702,7 @@
       position: absolute;
       bottom: -45px;
       font-size: 30px;
-      pointer-events: none;
+      pointer-events: auto;
       z-index: 10001;
       animation: mushroomBurstFloat 1.6s ease-out forwards;
       will-change: transform, opacity;
@@ -4702,7 +4702,7 @@
 
     hideBoardMessage();
     soundEffect.finalTrial();
-    showScreenMessage('<span style="font-size:42px; line-height:1.45; color:#ffeb3b; font-weight:900;">🔥クイズ館長からの挑戦状🔥<br><span style="font-size:34px; color:#fff;">「家に帰るまでが万博やで‼️<br>わたしのクイズを解かんかい‼️」</span></span>', 2500);
+    showScreenMessage('<span style="font-size:32px; line-height:1.45; color:#ffeb3b; font-weight:900;">🔥クイズ館長からの挑戦状🔥<br><span style="font-size:24px; color:#fff;">「家に帰るまでが万博やで‼️<br>わたしのクイズを解かんかい‼️」</span></span>', 2500);
 
     await new Promise(resolve => setTimeout(resolve, 2500));
     if (gameState.isGameOver) return;
@@ -5809,7 +5809,7 @@
         soundEffect.opchatAlarm();
         publishSharedSound('opchatAlarm');
         showScreenMessage(
-          `16:50 オプチャから通知が届く！<br>まもなく17時に電力館、nullダイアログ、ガンダム、いのちの未来の当日予約開放です📢`,
+          `16:50 オプチャから通知が届く！<br>📢まもなく17時に電力館、nullダイアログ、ガンダム、いのちの未来の当日予約開放です`,
           3000
         );
         await new Promise(r => setTimeout(r, 3000));

@@ -959,17 +959,17 @@
     #message-container span { font-size: 13px !important; }
     /* 最終ゴールクイズの挑戦状は通常メッセージより大きく表示 */
     #message-container .final-trial-message {
-      font-size: 36px !important;
+      font-size: 60px !important;
       line-height: 1.2 !important;
       font-weight: 900 !important;
     }
     #message-container .final-trial-message .final-trial-sub {
-      font-size: 26px !important;
+      font-size: 44px !important;
       line-height: 1.3 !important;
     }
     @media (max-width: 767px) {
-      #message-container .final-trial-message { font-size: 36px !important; }
-      #message-container .final-trial-message .final-trial-sub { font-size: 26px !important; }
+      #message-container .final-trial-message { font-size: 42px !important; }
+      #message-container .final-trial-message .final-trial-sub { font-size: 30px !important; }
     }
     .effect-banner { font-size: 16px !important; }
     .jam-banner, .allnight-banner { font-size: 16px !important; }
@@ -5557,6 +5557,8 @@
       gameState.positions[teamIndex] = backTarget;
       syncGameState();
       updateBoardImage();
+      showSquareMessage(teamIndex, backTarget);
+      await waitForSquareMessage(3000);
       return { type: 'jam' };
     }
 

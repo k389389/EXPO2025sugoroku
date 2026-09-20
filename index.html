@@ -1020,7 +1020,7 @@
         <button class="reaction-btn" onclick="sendReaction('🔥')">🔥</button>
       </div>
       <div class="chat-input-area">
-        <input type="text" id="chat-input" class="chat-input" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="send" placeholder="クイズはひらがなでメッセージを入力" onkeydown="if(event.key==='Enter'){event.preventDefault();sendChatMessage();}">
+        <input type="text" id="chat-input" class="chat-input" placeholder="クイズはひらがなでメッセージを入力" onkeydown="if(event.key==='Enter') sendChatMessage()">
         <button class="chat-send-btn" onclick="sendChatMessage()">送信</button>
       </div>
       <div class="chat-messages" id="chat-messages"></div>
@@ -1517,7 +1517,7 @@
 
   const allQuizPool = [
     { emojis: "🎾⚾️🎱🎮", answer: "すぽっちゃ", hint: "す◯◯◯ゃ" },
-    { emojis: "🐓🐈‍⬛🐕🫏🎼", answer: "ぶれーめんのおんがくたい", hint: "ぶ◯◯◯◯◯◯◯◯◯い" },
+    { emojis: "🐓🐈‍🐕🫏🎶", answer: "ぶれーめんのおんがくたい", hint: "ぶ◯◯◯◯◯◯◯◯◯い" },
     { emojis: "🌸♥️🌏🧚", answer: "とぅんくとぅんく", hint: "と◯◯◯◯◯く" },
     { emojis: "💧🔴👀👀👀", answer: "みゃくみゃく", hint: "み◯◯◯◯く" },
     { emojis: "🍣🍣🍣🍣🍣🎮🎁", answer: "くらずし", hint: "く◯◯し" },
@@ -1540,7 +1540,22 @@
     { emojis: "🌍 🪐 🚀 💥", answer: "あるまげどん", hint: "あ◯◯◯◯ん" },
     { emojis: "🇦🇺 🍰 🍫 🌴", answer: "らみんとん", hint: "ら◯◯◯ん" },
     { emojis: "🏴 💀 🦴 🦴", answer: "かいぞくき", hint: "か〇〇〇き" },
-    { emojis: "🥛 🍧 🥭", answer: "みるしゃりまんごー", hint: "み〇〇〇〇〇〇〇ー" }
+    { emojis: "🥛 🍧 🥭", answer: "みるしゃりまんごー", hint: "み〇〇〇〇〇〇〇ー" },
+    { emojis: "👤🫱🍱", answer: "わんはんどべんとう", hint: "わ◯◯◯◯◯◯◯う" },
+    { emojis: "⭐️⚾️🚀", answer: "あめりかかん", hint: "あ◯◯◯◯ん" },
+    { emojis: "🟡🏫🗣️🎦", answer: "いのちのあかし", hint: "い◯◯◯◯◯し" },
+    { emojis: "💧🔴👀👀👀🏠", answer: "みゃくみゃくはうす", hint: "み◯◯◯◯◯◯◯す" },
+    { emojis: "⚫️💧🔴👀👀👀", answer: "くろみゃくみゃく", hint: "く◯◯◯◯◯◯く" },
+    { emojis: "💧🔴👀👀👀🚁⛰️", answer: "ちはやあかさかむら", hint: "ち◯◯◯◯◯◯◯ら" },
+    { emojis: "🇨🇳🇰🇼🇧🇷🇦🇹🛣️", answer: "じごくどおり", hint: "じ◯◯◯◯り" },
+    { emojis: "🐟🧅🍞🇳🇱", answer: "ぶろーちぇはーりんぐ", hint: "ぶ◯◯◯◯◯◯◯◯ぐ" },
+    { emojis: "🟡🟢👀👀🍸", answer: "れねかくてる", hint: "レ◯◯◯◯る" },
+    { emojis: "🏇🤖", answer: "こるれお", hint: "こ◯◯お" },
+    { emojis: "🍲🥩🧅🥕🥔🫑🇭🇺", answer: "ぐやーしゅ", hint: "ぐ◯◯◯ゅ" },
+    { emojis: "🌳🎭💧🎨🚶", answer: "しずけさのもり", hint: "し◯◯◯◯◯り" },
+    { emojis: "🤖🐙🍜🥟🍣🍛", answer: "おおさかのれんめぐり", hint: "お◯◯◯◯◯◯◯◯り" },
+    { emojis: "🚶☝️🍚🥢", answer: "いっしょくにゅうこん", hint: "い◯◯◯◯◯◯◯ん" },
+    { emojis: "🥚🥧🇵🇹", answer: "えっぐたると", hint: "え◯◯◯◯と" }
   ];
 
   const tileEvents = [
@@ -2590,11 +2605,10 @@
       const chatMessages = document.getElementById('chat-messages');
       if (!chatMessages) return;
 
-      // チャット入力中に、Firebaseの再同期でチャット欄全体を作り直さない。
-      // 入力欄とは別DOMだが、スマホでは大量のDOM更新がキーボード入力を
-      // 一時的に遅延させることがあるため、新規メッセージだけ追加する。
+      // 過去ログはチャット欄に残すが、初回同期ではポップアップしない
+      chatMessages.innerHTML = '';
+
       if (!val) {
-        chatMessages.replaceChildren();
         chatHistoryInitialized = true;
         return;
       }
@@ -2603,10 +2617,7 @@
         return (a[1].timestamp || 0) - (b[1].timestamp || 0);
       });
 
-      // 初回だけ履歴を一括表示。以後は未表示のメッセージだけ追加する。
-      // これによりチャット入力中のDOM再構築を避ける。
       entries.forEach(([chatId, c]) => {
-        if (seenChatIds.has(chatId)) return;
         const msgDiv = document.createElement('div');
         const teamColor = c.spectator ? '#777' : (teamColorsHex[c.team] || '#333');
 
@@ -2818,17 +2829,6 @@
     cpuKmyakSpawnTimers.forEach(t => clearTimeout(t));
     cpuKmyakSpawnTimers = [];
     if (gameState.kmyakSpawnResolved) return;
-
-    // 複数端末が同時に5秒終了を検知しても、終了処理とターン送りを
-    // 1台だけが担当するようFirebaseトランザクションで確定する。
-    if (!window.dbRef) return;
-    const { ref, runTransaction, db } = window.dbRef;
-    const claim = await runTransaction(ref(db, 'gameState/kmyakSpawnResolved'), current => {
-      if (current === true) return;
-      return true;
-    }).catch(() => null);
-    if (!claim || !claim.committed) return;
-
     gameState.kmyakSpawnResolved = true;
     gameState.kmyakSpawnActive = false;
     syncGameState();
@@ -2869,15 +2869,11 @@
       await waitForSquareMessage(2500);
     }
 
-    // このこみゃくパニックで現在のターンを1回だけ消化し、次のチームへ進める。
-    // 先にadvanceTurn()することで、代理で振る場合も同じチームが連続して担当しない。
+    // 次に再びマス6へ止まったときも発生できるようにリセット。
     gameState.kmyakSpawnTriggered = false;
+    gameState.kmyakSpawnResolved = false;
     gameState.kmyakSpawnTargetTime = null;
-    gameState.kmyakSpawnResolved = true;
-    gameState.kmyakSpawnActive = false;
-    isMoving = false;
-    advanceTurn();
-    scheduleCameraForNextTeam(50);
+    syncGameState();
   }
 
   function handleLogin() {
@@ -5029,7 +5025,7 @@
         targetPos = goalIndex;
       }
     } else {
-      const triggerOpchatAdvice = targetPos === 12 && Math.random() < 0.50;
+      const triggerOpchatAdvice = targetPos === 12 && Math.random() < 0.70;
       const triggerProducerMeet = targetPos === 7 && Math.random() < 0.10;
       await movePieceStepByStep(teamIndex, oldPos, targetPos, false);
       gameState.positions[teamIndex] = targetPos;
@@ -5150,13 +5146,6 @@
         }, 200);
         setTimeout(() => { clearInterval(wait); resolve(); }, 9000);
       });
-
-      // こみゃくパニック終了処理がこのターンを引き継いで次のチームへ進める。
-      // 元のサイコロ処理はここで終了し、同じターンをもう一度進めない。
-      isMoving = false;
-      refreshDiceAvailability();
-      updateUI();
-      return;
     }
 
     // マスの効果を、サイコロで「止まった」ときに必ず発動する。

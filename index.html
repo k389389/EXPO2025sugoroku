@@ -1211,6 +1211,26 @@
       osc.start();
       osc.stop(ctx.currentTime + 0.3);
     },
+    finalTrial: function() {
+      const ctx = getAudioContext();
+      const notes = [220, 277.18, 329.63, 246.94, 196];
+      notes.forEach((freq, index) => {
+        setTimeout(() => {
+          if (ctx.state === 'closed') return;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = index < 3 ? 'triangle' : 'sawtooth';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime);
+          gain.gain.setValueAtTime(0.001, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.16, ctx.currentTime + 0.03);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.34);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.36);
+        }, index * 170);
+      });
+    },
     goal: function() {
       const ctx = getAudioContext();
       const notes = [523.25, 659.25, 783.99, 1046.50];
@@ -2645,11 +2665,23 @@
             Number(c.team) >= 0 && Number(c.team) < 4
           ) {
             quizProcessedChatIds.add(chatId);
+            // ゴール直前の最後の試練は、ゴールしたチームだけが回答できる。
+            if (activeQuiz.mode === 'finalGoal' && Number(c.team) !== Number(activeQuiz.teamIndex)) {
+              return;
+            }
             if (c.text.trim() === activeQuiz.answer) {
-              handleQuizCorrect(c.team, c.name);
+              if (activeQuiz.mode === 'finalGoal') {
+                handleFinalGoalQuizCorrect(c.team, c.name);
+              } else {
+                handleQuizCorrect(c.team, c.name);
+              }
             } else {
-              soundEffect.wrong();
-              showWrongBanner(`${c.name}さんの回答「${c.text}」は不正解…！`);
+              if (activeQuiz.mode === 'finalGoal') {
+                handleFinalGoalQuizWrong(c.team, c.name, c.text);
+              } else {
+                soundEffect.wrong();
+                showWrongBanner(`${c.name}さんの回答「${c.text}」は不正解…！`);
+              }
             }
           }
         }
@@ -4166,6 +4198,194 @@
     }, 1000);
   }
 
+  function startFinalGoalQuiz(teamIndex) {
+    if (gameState.activeQuiz || activeQuiz || gameState.isGameOver) return;
+
+    const q = allQuizPool[Math.floor(Math.random() * allQuizPool.length)];
+    const roundId = Number(gameState.quizRoundId || 0) + 1;
+    const startTime = Date.now();
+
+    gameState.quizRoundId = roundId;
+    gameState.quizTurnLocked = true;
+    gameState.quizCountdownActive = false;
+    gameState.quizRoundCountdownStarted = false;
+    gameState.activeQuiz = {
+      mode: 'finalGoal',
+      teamIndex,
+      emojis: q.emojis,
+      answer: q.answer,
+      hint: q.hint,
+      active: false,
+      questionNumber: 1,
+      startTime,
+      roundId
+    };
+    syncGameState();
+
+    soundEffect.finalTrial();
+    showScreenMessage(`🧠 クイズ館長からの挑戦状‼️<br>ゴールしたいならわたしのクイズを解かんかい‼️`, 2400);
+
+    setTimeout(() => {
+      if (!gameState.activeQuiz || gameState.activeQuiz.mode !== 'finalGoal') return;
+      startFinalGoalCountdown(teamIndex, q, roundId);
+    }, 2500);
+  }
+
+  function startFinalGoalCountdown(teamIndex, q, roundId) {
+    if (!gameState.activeQuiz || Number(gameState.activeQuiz.roundId) !== Number(roundId)) return;
+
+    gameState.quizCountdownActive = true;
+    gameState.quizCountdown = 3;
+    syncGameState();
+    showQuizCountdown(3);
+    soundEffect.quizStart();
+
+    let count = 3;
+    const timer = setInterval(() => {
+      if (!gameState.activeQuiz || Number(gameState.activeQuiz.roundId) !== Number(roundId)) {
+        clearInterval(timer);
+        return;
+      }
+      count--;
+      if (count > 0) {
+        gameState.quizCountdown = count;
+        syncGameState();
+        showQuizCountdown(count);
+        soundEffect.quizStart();
+      } else {
+        clearInterval(timer);
+        gameState.quizCountdownActive = false;
+        gameState.quizCountdown = 0;
+        gameState.activeQuiz.active = true;
+        gameState.activeQuiz.startTime = Date.now();
+        syncGameState();
+        const overlay = document.querySelector('.quiz-countdown-overlay');
+        if (overlay) overlay.remove();
+        quizProcessedChatIds.clear();
+        quizAnswerLocked = false;
+        showFinalGoalQuizOverlay(gameState.activeQuiz);
+        startFinalGoalQuizTimer(gameState.activeQuiz.startTime, roundId);
+      }
+    }, 1000);
+  }
+
+  function showFinalGoalQuizOverlay(qData) {
+    const board = document.getElementById('board');
+    if (!board) return;
+    const existing = board.querySelector('.quiz-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'quiz-overlay';
+    overlay.id = 'quiz-overlay';
+    overlay.innerHTML = `
+      <div class="quiz-title">🧠 最後の試練‼️ クイズ館長からの挑戦状</div>
+      <div class="quiz-timer">残り時間: <span id="quiz-timer-sec">15</span>秒</div>
+      <div class="quiz-emojis">${qData.emojis}</div>
+      <div class="quiz-hint">ヒント: ${qData.hint}</div>
+      <div style="font-size:10px;color:#555;">ゴールするチームだけが回答できます。15秒以内にひらがなで答えよう！</div>
+    `;
+    board.appendChild(overlay);
+  }
+
+  function startFinalGoalQuizTimer(startTime, roundId) {
+    if (quizTimer) clearInterval(quizTimer);
+    quizTimeRemaining = Math.max(0, 15 - Math.floor((Date.now() - Number(startTime || Date.now())) / 1000));
+    const secSpan = document.getElementById('quiz-timer-sec');
+    if (secSpan) secSpan.innerText = quizTimeRemaining;
+
+    if (quizTimeRemaining <= 0) {
+      handleFinalGoalQuizWrong(null, '時間切れ', '');
+      return;
+    }
+
+    quizTimer = setInterval(() => {
+      if (!gameState.activeQuiz || gameState.activeQuiz.mode !== 'finalGoal' || Number(gameState.activeQuiz.roundId) !== Number(roundId)) {
+        clearInterval(quizTimer);
+        quizTimer = null;
+        return;
+      }
+      quizTimeRemaining--;
+      const sec = document.getElementById('quiz-timer-sec');
+      if (sec) sec.innerText = quizTimeRemaining;
+      if (quizTimeRemaining <= 0) {
+        clearInterval(quizTimer);
+        quizTimer = null;
+        handleFinalGoalQuizWrong(null, '時間切れ', '');
+      }
+    }, 1000);
+  }
+
+  async function handleFinalGoalQuizCorrect(teamIndex, playerName) {
+    if (!activeQuiz || !activeQuiz.active || activeQuiz.mode !== 'finalGoal' || quizAnswerLocked) return;
+    if (Number(teamIndex) !== Number(activeQuiz.teamIndex)) return;
+
+    const roundId = Number(activeQuiz.roundId || 0);
+    const { ref, runTransaction, db } = window.dbRef;
+    const claim = await runTransaction(ref(db, `gameState/quizAnswerClaims/${roundId}`), current => {
+      if (current) return;
+      return { type: 'finalGoalCorrect', teamIndex, playerName, claimedAt: Date.now() };
+    }).catch(() => null);
+    if (!claim || !claim.committed) return;
+
+    quizAnswerLocked = true;
+    activeQuiz.active = false;
+    if (quizTimer) { clearInterval(quizTimer); quizTimer = null; }
+    gameState.activeQuiz = null;
+    gameState.quizTurnLocked = false;
+    syncGameState();
+    closeQuizOverlay();
+
+    soundEffect.goal();
+    pushLog(`🎉 ${teamNames[teamIndex]} が最後の試練を突破！ゴール！`);
+    showScreenMessage(`🎉 正解‼️ 🎉<br><span style="font-size:16px;">最後の試練を突破！</span><br><span style="font-size:12px;">${teamNames[teamIndex]}、ゴールです！</span>`, 2500);
+    gameState.isGameOver = true;
+    syncGameState();
+    updateUI();
+    setTimeout(() => {
+      showWinBanner(teamNames[teamIndex], Object.values(allUsers).filter(u => u.team === teamIndex).map(u => u.name).join('、'));
+      zoomOutAfterGameOver();
+    }, 2500);
+  }
+
+  async function handleFinalGoalQuizWrong(teamIndex, playerName, answerText) {
+    if (!activeQuiz || !activeQuiz.active || activeQuiz.mode !== 'finalGoal' || quizAnswerLocked) return;
+    if (teamIndex !== null && Number(teamIndex) !== Number(activeQuiz.teamIndex)) return;
+
+    const roundId = Number(activeQuiz.roundId || 0);
+    const { ref, runTransaction, db } = window.dbRef;
+    const claim = await runTransaction(ref(db, `gameState/quizAnswerClaims/${roundId}`), current => {
+      if (current) return;
+      return { type: 'finalGoalWrong', teamIndex: activeQuiz.teamIndex, playerName, claimedAt: Date.now() };
+    }).catch(() => null);
+    if (!claim || !claim.committed) return;
+
+    quizAnswerLocked = true;
+    const targetTeam = Number(activeQuiz.teamIndex);
+    activeQuiz.active = false;
+    if (quizTimer) { clearInterval(quizTimer); quizTimer = null; }
+    gameState.activeQuiz = null;
+    gameState.quizTurnLocked = false;
+    syncGameState();
+    closeQuizOverlay();
+
+    soundEffect.wrong();
+    showScreenMessage(`❌ 最後の試練、不正解！<br><span style="font-size:13px;">${teamNames[targetTeam]}は3マス戻ります。</span>`, 2200);
+    pushLog(`❌ ${teamNames[targetTeam]} は最後の試練に失敗！3マス戻ります。`);
+    const oldPos = gameState.positions[targetTeam];
+    const backTarget = Math.max(0, oldPos - 3);
+    await new Promise(r => setTimeout(r, 2200));
+    await movePieceStepByStep(targetTeam, oldPos, backTarget, true);
+    gameState.positions[targetTeam] = backTarget;
+    syncGameState();
+    updateBoardImage();
+    showSquareMessage(targetTeam, backTarget);
+    await waitForSquareMessage(3000);
+    isMoving = false;
+    advanceTurn();
+    scheduleCameraForNextTeam(50);
+  }
+
   async function handleQuizCorrect(teamIndex, playerName) {
     if (!activeQuiz || !activeQuiz.active || quizAnswerLocked) return;
 
@@ -5226,7 +5446,7 @@
         showScreenMessage(`🛸✨ 願いを心に思い浮かべて<br>　　 夜空を見上げてみてください ✨🛸`, 3000);
         await waitForSquareMessage(3500);
         // ドローンショーとアナウンスが終わった後、10%だけ特別演出。
-        if (Math.random() < 0.10) {
+        if (Math.random() < 0.20) {
           showMyak5Reveal(true);
           await new Promise(r => setTimeout(r, 6500));
         }
@@ -5234,19 +5454,10 @@
     }
 
     if (targetPos === goalIndex) {
-      soundEffect.goal();
-      const winningMembers = Object.values(allUsers)
-        .filter(u => u.team === teamIndex)
-        .map(u => u.name)
-        .join("、");
-
-      pushLog(`🎉 優勝：${teamNames[teamIndex]}！ おめでとう！ 🎉`);
-      showWinBanner(teamNames[teamIndex], winningMembers);
-      gameState.isGameOver = true;
-      syncGameState();
-      updateUI();
+      // 20マス目にピッタリ止まり、かつ大混雑・オールナイトが発生しなかった場合は
+      // 100%で「最後の試練」。ここではまだゴール扱いにせず、クイズ突破後にゴールする。
       isMoving = false;
-      zoomOutAfterGameOver();
+      startFinalGoalQuiz(teamIndex);
       return;
     }
 

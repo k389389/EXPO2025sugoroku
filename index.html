@@ -6261,15 +6261,65 @@
       return;
     }
 
-    // クイズ・イベント中だけは誤操作を防ぐ。
-    // turnActionLocked は「停止してしまった時」に解除して代理で振るため、
-    // ここではブロックしない。
+    // 通常のイベント中は誤操作を防ぐ。
+    // ただし15マス目のミャクミャク連打バトルだけは、20秒以上停止した場合に
+    // 「代理で振る」でイベントを強制終了して次のサイコロへ進められるようにする。
+    const kmyakBattleStuck = !!gameState.activeKmyakBattle &&
+      !!lastRollTime && Date.now() - lastRollTime >= 20000;
+
     if (activeQuiz || gameState.activeQuiz || gameState.quizTurnLocked ||
         gameState.quizCountdownActive || gameState.quizRoundCountdownStarted ||
-        gameState.activeLottery || gameState.activeKmyakBattle ||
-        gameState.activeMyakuNyokki || gameState.activeMushroomTime ||
-        gameState.mushroomTimeTurnLocked) {
+        gameState.activeLottery || gameState.activeMyakuNyokki ||
+        gameState.activeMushroomTime || gameState.mushroomTimeTurnLocked ||
+        (gameState.activeKmyakBattle && !kmyakBattleStuck)) {
       alert('現在はイベント処理中のため、代理で振れません。');
+      return;
+    }
+
+    // 15マス目イベントが端末・通信状態などで20秒以上止まった場合の救済。
+    if (kmyakBattleStuck) {
+      if (!confirm('15マス目のイベントが20秒以上止まっています。\n「代理で振る」でイベントを終了して、次のサイコロへ進みますか？')) return;
+
+      const { ref, runTransaction, db } = window.dbRef;
+      const recovered = await runTransaction(ref(db, 'gameState'), current => {
+        if (!current || !current.gameStarted || current.isGameOver) return;
+        if (!current.activeKmyakBattle) return;
+
+        const currentTeam = Number(current.currentTeamIndex);
+        const players = getRealTeamPlayers(currentTeam);
+        const playerIndices = Array.isArray(current.playerIndices) ? [...current.playerIndices] : [0,0,0,0];
+        if (players.length > 0) {
+          playerIndices[currentTeam] = (Number(playerIndices[currentTeam] || 0) + 1) % players.length;
+        } else {
+          playerIndices[currentTeam] = 0;
+        }
+
+        return {
+          ...current,
+          playerIndices,
+          currentTeamIndex: (currentTeam + 1) % 4,
+          activeKmyakBattle: false,
+          kmyakBattlePhase: 'idle',
+          kmyakBattleTeamIndex: null,
+          kmyakBattleResultRank: null,
+          kmyakBattleResultOwner: null,
+          kmyakBattleResolved: false,
+          turnActionLocked: false,
+          turnActionLockedAt: 0
+        };
+      }).catch(() => null);
+
+      if (!recovered || !recovered.committed) {
+        alert('イベントの復旧に失敗しました。もう一度「代理で振る」を押してください。');
+        return;
+      }
+
+      gameState = recovered.snapshot.val() || gameState;
+      removeKmyakBattleOverlay();
+      isMoving = false;
+      updateBoardImage();
+      updateUI();
+      scheduleCameraForNextTeam(50);
       return;
     }
 

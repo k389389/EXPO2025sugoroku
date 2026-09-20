@@ -2820,7 +2820,13 @@
             } else if (c.text.trim() === activeQuiz.answer) {
               handleQuizCorrect(c.team, c.name);
             } else if (activeQuiz.finalGoal) {
-              handleFinalGoalQuizWrong(c.team, c.name, `「${c.text}」`);
+              // 最終問題は不正解でも終了しない。15秒間、何度でも挑戦できる。
+              soundEffect.wrong();
+              showWrongBanner(`${c.name}さんの回答「${c.text}」は不正解…！`);
+              setTimeout(() => {
+                const wrongBanner = document.querySelector('.wrong-banner');
+                if (wrongBanner && activeQuiz && activeQuiz.finalGoal && activeQuiz.active) wrongBanner.remove();
+              }, 900);
             } else {
               soundEffect.wrong();
               showWrongBanner(`${c.name}さんの回答「${c.text}」は不正解…！`);
@@ -4696,7 +4702,7 @@
 
     hideBoardMessage();
     soundEffect.finalTrial();
-    showScreenMessage('<span style="font-size:26px; line-height:1.55; color:#ffeb3b;">🔥クイズ館長からの挑戦状🔥<br><span style="font-size:21px; color:#fff;">「家に帰るまでが万博やで‼️<br>わたしのクイズを解かんかい‼️」</span></span>', 2500);
+    showScreenMessage('<span style="font-size:42px; line-height:1.45; color:#ffeb3b; font-weight:900;">🔥クイズ館長からの挑戦状🔥<br><span style="font-size:34px; color:#fff;">「家に帰るまでが万博やで‼️<br>わたしのクイズを解かんかい‼️」</span></span>', 2500);
 
     await new Promise(resolve => setTimeout(resolve, 2500));
     if (gameState.isGameOver) return;
@@ -4731,6 +4737,29 @@
     pushLog(`🔥 ${teamNames[teamIndex]} に最後の試練！15秒以内にクイズに答えよう！`);
     showQuizOverlay(activeQuiz);
     startQuizTimer(activeQuiz.startTime);
+    scheduleFinalGoalCpuAnswer(teamIndex);
+  }
+
+  function scheduleFinalGoalCpuAnswer(teamIndex) {
+    cpuQuizTimers.forEach(t => clearTimeout(t));
+    cpuQuizTimers = [];
+    if (!isCpuTeam(Number(teamIndex))) return;
+
+    // 最終問題はゴールしたCPUチームも15秒以内に挑戦する。
+    const delay = 5000 + Math.floor(Math.random() * 5000);
+    const timer = setTimeout(() => {
+      if (!activeQuiz || !activeQuiz.active || !activeQuiz.finalGoal || quizAnswerLocked) return;
+      if (Number(activeQuiz.targetTeam) !== Number(teamIndex)) return;
+      const playerName = "🤖 CPU";
+      if (Math.random() < 0.8) {
+        pushLog(`🤖 ${teamNames[teamIndex]}（CPU）が最後の試練に挑戦！`);
+        handleFinalGoalQuizCorrect(teamIndex, playerName);
+      } else {
+        soundEffect.wrong();
+        pushLog(`🤖 ${teamNames[teamIndex]}（CPU）が最後の試練に挑戦しましたが、不正解…！`);
+      }
+    }, delay);
+    cpuQuizTimers.push(timer);
   }
 
   async function handleFinalGoalQuizCorrect(teamIndex, playerName) {
@@ -4747,6 +4776,8 @@
 
     quizAnswerLocked = true;
     activeQuiz.active = false;
+    cpuQuizTimers.forEach(t => clearTimeout(t));
+    cpuQuizTimers = [];
     if (quizTimer) { clearInterval(quizTimer); quizTimer = null; }
     gameState.activeQuiz = null;
     gameState.quizTurnLocked = true;
@@ -4756,10 +4787,11 @@
 
     soundEffect.goal();
     pushLog(`🎉 ${teamNames[teamIndex]} が最後の試練に正解！ゴール！`);
-    await new Promise(resolve => setTimeout(resolve, 1000));
 
+    // 正解後は2秒待って20マス目のアナウンス、その2秒後に表彰。
+    await new Promise(resolve => setTimeout(resolve, 2000));
     showSquareMessage(teamIndex, totalTiles - 1);
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     const winningMembers = Object.values(allUsers)
       .filter(u => u.team === teamIndex)
@@ -4788,6 +4820,8 @@
 
     quizAnswerLocked = true;
     activeQuiz.active = false;
+    cpuQuizTimers.forEach(t => clearTimeout(t));
+    cpuQuizTimers = [];
     if (quizTimer) { clearInterval(quizTimer); quizTimer = null; }
     gameState.activeQuiz = null;
     syncGameState();

@@ -171,7 +171,7 @@
       width: 54px;
       height: 54px;
       border-radius: 50%;
-      object-fit: cover;
+      object-fit: contain;
       cursor: pointer;
       z-index: 4000;
       border: 2px solid #ffeb3b;
@@ -582,6 +582,23 @@
     .kmyak-tap-btn:active { transform: scale(0.95); }
     .kmyak-stats { font-size: 10px; margin-top: 8px; width: 100%; background: rgba(255,255,255,0.1); padding: 6px; border-radius: 8px; }
 
+    /* 📢 12マス目 当日予約チャレンジ */
+    .yoyaku-event-overlay {
+      position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+      z-index:4700; width:min(92%,430px); background:rgba(20,25,35,.98); color:#fff;
+      border:4px solid #ff9800; border-radius:18px; padding:14px; text-align:center;
+      box-shadow:0 10px 35px rgba(0,0,0,.75);
+    }
+    .yoyaku-event-title { font-size:20px; font-weight:900; color:#ffeb3b; margin-bottom:8px; line-height:1.35; }
+    .yoyaku-event-desc { font-size:12px; line-height:1.5; margin-bottom:8px; }
+    .yoyaku-event-image {
+      display:block; width:min(78vw,320px); max-height:230px; object-fit:contain;
+      margin:8px auto; border:3px solid #fff; border-radius:10px;
+      cursor:pointer; touch-action:manipulation; user-select:none;
+    }
+    .yoyaku-event-image.disabled { cursor:default; opacity:.9; }
+    .yoyaku-event-result { font-size:18px; font-weight:900; color:#ffeb3b; line-height:1.4; margin-top:8px; }
+
     /* 🍄 キノコターイム！ */
     .mushroom-time-overlay {
       position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
@@ -626,7 +643,7 @@
       z-index: 3; 
       box-shadow: 0 2px 6px rgba(0,0,0,0.4); 
       transform: translate(-50%, -50%); 
-      object-fit: cover;
+      object-fit: contain;
       background: #fff;
       padding: 2px;
     }
@@ -678,6 +695,22 @@
       10% { opacity: 1; transform: translate(-50%, 0) scale(1); }
       85% { opacity: 1; }
       100% { opacity: 0; bottom: calc(100% + 20px); transform: translate(-50%, 0) scale(1.05); }
+    }
+
+    /* キノコタイム専用演出：Firebase/チャットには送らず、この端末だけで表示 */
+    .mushroom-burst-float {
+      position: absolute;
+      bottom: -45px;
+      font-size: 30px;
+      pointer-events: none;
+      z-index: 10001;
+      animation: mushroomBurstFloat 1.6s ease-out forwards;
+      will-change: transform, opacity;
+    }
+    @keyframes mushroomBurstFloat {
+      0% { opacity: 0; transform: translate(-50%, 0) scale(.45) rotate(-8deg); }
+      12% { opacity: 1; transform: translate(-50%, -8px) scale(1.05) rotate(5deg); }
+      100% { opacity: 0; transform: translate(calc(-50% + var(--drift-x)), -260px) scale(.9) rotate(var(--rotate)); }
     }
 
     .side-panel { 
@@ -1046,7 +1079,7 @@
       <button id="proxy-roll-btn" class="proxy-dice-btn" onclick="rollDiceProxy()">🤖 代理で振る</button>
     </div>
     <div style="margin-top: 6px; text-align: center;">
-      <img src="logo.jpg" alt="管理下の画像" style="width: 100%; max-height: 120px; object-fit: cover; border-radius: 6px; border: 1px solid #ddd;">
+      <img src="logo.jpg" alt="管理下の画像" style="display: block; width: 100%; height: auto; max-width: 100%; object-fit: contain; border-radius: 6px; border: 1px solid #ddd;">
     </div>
   </div>
 </div>
@@ -1163,6 +1196,27 @@
         }, index * 100);
       });
     },
+    opchatAlarm: function() {
+      const ctx = getAudioContext();
+      // オプチャ通知らしい、短い警告アラーム音。2音を2回繰り返す。
+      const notes = [880, 660, 880, 660];
+      notes.forEach((freq, index) => {
+        setTimeout(() => {
+          if (ctx.state === 'closed') return;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime);
+          gain.gain.setValueAtTime(0.001, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.11, ctx.currentTime + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.19);
+        }, index * 220);
+      });
+    },
     quizStart: function() {
       const ctx = getAudioContext();
       const notes = [392.00, 523.25, 659.25, 783.99];
@@ -1181,24 +1235,6 @@
           osc.start();
           osc.stop(ctx.currentTime + 0.2);
         }, index * 75);
-      });
-    },
-    finalTrial: function() {
-      const ctx = getAudioContext();
-      const notes = [220.00, 277.18, 329.63, 246.94, 196.00];
-      notes.forEach((freq, index) => {
-        setTimeout(() => {
-          if (ctx.state === 'closed') return;
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = index < 3 ? 'sawtooth' : 'triangle';
-          osc.frequency.setValueAtTime(freq, ctx.currentTime);
-          gain.gain.setValueAtTime(0.001, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.14, ctx.currentTime + 0.03);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.42);
-          osc.connect(gain); gain.connect(ctx.destination);
-          osc.start(); osc.stop(ctx.currentTime + 0.45);
-        }, index * 120);
       });
     },
     return: function() {
@@ -1351,6 +1387,57 @@
           osc.stop(ctx.currentTime + 0.12);
         }, i * 55);
       }
+    },
+    yoyakuStart: function() {
+      const ctx = getAudioContext();
+      // マス12「当日予約」イベント開始：通知→予約画面をイメージした緊張感のある短い音。
+      [523.25, 659.25, 783.99].forEach((freq, index) => {
+        setTimeout(() => {
+          if (ctx.state === 'closed') return;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime);
+          gain.gain.setValueAtTime(0.12, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.18);
+        }, index * 100);
+      });
+    },
+    yoyakuSuccess: function() {
+      const ctx = getAudioContext();
+      [659.25, 783.99, 1046.50, 1318.51].forEach((freq, index) => {
+        setTimeout(() => {
+          if (ctx.state === 'closed') return;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime);
+          gain.gain.setValueAtTime(0.16, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.35);
+        }, index * 110);
+      });
+    },
+    yoyakuFail: function() {
+      const ctx = getAudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(260, ctx.currentTime);
+      osc.frequency.linearRampToValueAtTime(120, ctx.currentTime + 0.45);
+      gain.gain.setValueAtTime(0.14, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.45);
     },
     guts: function() {
       const ctx = getAudioContext();
@@ -1535,7 +1622,7 @@
 
   const allQuizPool = [
     { emojis: "🎾⚾️🎱🎮", answer: "すぽっちゃ", hint: "す◯◯◯ゃ" },
-    { emojis: "🐓🐈‍⬛🐕🫏🎼", answer: "ぶれーめんのおんがくたい", hint: "ぶ◯◯◯◯◯◯◯◯◯い" },
+    { emojis: "🐓🐈‍🐕🫏🎶", answer: "ぶれーめんのおんがくたい", hint: "ぶ◯◯◯◯◯◯◯◯◯い" },
     { emojis: "🌸♥️🌏🧚", answer: "とぅんくとぅんく", hint: "と◯◯◯◯◯く" },
     { emojis: "💧🔴👀👀👀", answer: "みゃくみゃく", hint: "み◯◯◯◯く" },
     { emojis: "🍣🍣🍣🍣🍣🎮🎁", answer: "くらずし", hint: "く◯◯し" },
@@ -1558,22 +1645,7 @@
     { emojis: "🌍 🪐 🚀 💥", answer: "あるまげどん", hint: "あ◯◯◯◯ん" },
     { emojis: "🇦🇺 🍰 🍫 🌴", answer: "らみんとん", hint: "ら◯◯◯ん" },
     { emojis: "🏴 💀 🦴 🦴", answer: "かいぞくき", hint: "か〇〇〇き" },
-    { emojis: "🥛 🍧 🥭", answer: "みるしゃりまんごー", hint: "み〇〇〇〇〇〇〇ー" },
-    { emojis: "👤🫱🍱", answer: "わんはんどべんとう", hint: "わ◯◯◯◯◯◯◯う" },
-    { emojis: "⭐️⚾️🚀", answer: "あめりかかん", hint: "あ◯◯◯◯ん" },
-    { emojis: "🟡🏫🗣️🎦", answer: "いのちのあかし", hint: "い◯◯◯◯◯し" },
-    { emojis: "💧🔴👀👀👀🏠", answer: "みゃくみゃくはうす", hint: "み◯◯◯◯◯◯◯す" },
-    { emojis: "⚫️💧🔴👀👀👀", answer: "くろみゃくみゃく", hint: "く◯◯◯◯◯◯く" },
-    { emojis: "💧🔴👀👀👀🚁⛰️", answer: "ちはやあかさかむら", hint: "ち◯◯◯◯◯◯◯ら" },
-    { emojis: "🇨🇳🇰🇼🇧🇷🇦🇹🛣️", answer: "じごくどおり", hint: "じ◯◯◯◯り" },
-    { emojis: "🐟🧅🍞🇳🇱", answer: "ぶろーちぇはーりんぐ", hint: "ぶ◯◯◯◯◯◯◯◯ぐ" },
-    { emojis: "🟡🟢👀👀🍸", answer: "れねかくてる", hint: "れ◯◯◯◯る" },
-    { emojis: "🏇🤖", answer: "こるれお", hint: "こ◯◯お" },
-    { emojis: "🍲🥩🧅🥕🥔🫑🇭🇺", answer: "ぐやーしゅ", hint: "ぐ◯◯◯ゅ" },
-    { emojis: "🌳🎭💧🎨🚶", answer: "しずけさのもり", hint: "し◯◯◯◯◯り" },
-    { emojis: "🤖🐙🍜🥟🍣🍛", answer: "おおさかのれんめぐり", hint: "お◯◯◯◯◯◯◯◯り" },
-    { emojis: "🚶☝️🍚🥢", answer: "いっしょくにゅうこん", hint: "い◯◯◯◯◯◯◯ん" },
-    { emojis: "🥚🥧🇵🇹", answer: "えっぐたると", hint: "え◯◯◯◯と" }
+    { emojis: "🥛 🍧 🥭", answer: "みるしゃりまんごー", hint: "み〇〇〇〇〇〇〇ー" }
   ];
 
   const tileEvents = [
@@ -1625,6 +1697,10 @@
     quizUsedIndices: [],
     quizRoundId: 0,
     kmyakBattleTriggered: false,
+    kmyakBattleTriggeredTeams: [false, false, false, false],
+    kmyakBattleTeamIndex: null,
+    kmyakBattleResultRank: null,
+    kmyakBattleResultOwner: null,
     activeLottery: false,
     activeKmyakBattle: false,
     kmyakBattlePhase: "idle",
@@ -1642,7 +1718,8 @@
     turnActionLocked: false,
     turnActionLockedAt: 0,
     activeMushroomTime: false,
-    mushroomTime: null
+    mushroomTime: null,
+    yoyakuEvent: null
   };
 
   let teamPlayers = [[], [], [], []];
@@ -1817,6 +1894,14 @@
     if (!overlay) {
       overlay = document.createElement('div');
       overlay.className = 'mushroom-time-overlay';
+      overlay.innerHTML = `
+        <div class="mushroom-time-title">🍄 キノコターイム！</div>
+        <div class="mushroom-time-desc">5秒間、リアクション🍄を連打！<br>参加者1人あたりの平均で勝負！</div>
+        <div class="mushroom-time-countdown"></div>
+        <button class="mushroom-time-btn" onclick="pressMushroomTime()">🍄</button>
+        <div class="mushroom-time-stats"></div>
+        <div class="mushroom-time-status"></div>
+      `;
       board.appendChild(overlay);
     }
     const mt = gameState.mushroomTime;
@@ -1827,16 +1912,30 @@
     const averages = taps.map((v, i) => counts[i] ? (Number(v) / Number(counts[i])) : 0);
     const myTeam = Number(myTeamIndex);
     const myAverage = Number.isInteger(myTeam) && myTeam >= 0 && myTeam < 4 ? averages[myTeam].toFixed(1) : '0.0';
-    overlay.innerHTML = `
-      <div class="mushroom-time-title">🍄 キノコターイム！</div>
-      <div class="mushroom-time-desc">5秒間、リアクション🍄を連打！<br>参加者1人あたりの平均で勝負！</div>
-      <div class="mushroom-time-countdown">${seconds}</div>
-      <button class="mushroom-time-btn" ${remaining <= 0 ? 'disabled' : ''} onclick="pressMushroomTime()">🍄</button>
-      <div class="mushroom-time-stats">
-        ${teamNames.map((name, i) => `${name}：${Number(taps[i] || 0)}回 ÷ ${Number(counts[i] || 1)}人 = <b>${averages[i].toFixed(1)}</b>`).join('<br>')}
-      </div>
-      <div class="mushroom-time-status">あなたのチーム平均：${myAverage}</div>
-    `;
+
+    overlay.querySelector('.mushroom-time-countdown').textContent = seconds;
+    const button = overlay.querySelector('.mushroom-time-btn');
+    button.disabled = remaining <= 0;
+    overlay.querySelector('.mushroom-time-stats').innerHTML = teamNames.map((name, i) => `${name}：${Number(taps[i] || 0)}回 ÷ ${Number(counts[i] || 1)}人 = <b>${averages[i].toFixed(1)}</b>`).join('<br>');
+    overlay.querySelector('.mushroom-time-status').textContent = `あなたのチーム平均：${myAverage}`;
+  }
+
+  // キノコタイムの視覚演出だけを端末内で行う。Firebaseやチャットには送らない。
+  function showMushroomBurst() {
+    const board = document.getElementById('board');
+    if (!board) return;
+    const active = board.querySelectorAll('.mushroom-burst-float');
+    if (active.length >= 12) {
+      active[0].remove();
+    }
+    const el = document.createElement('div');
+    el.className = 'mushroom-burst-float';
+    el.textContent = '🍄';
+    el.style.left = `${12 + Math.random() * 76}%`;
+    el.style.setProperty('--drift-x', `${-45 + Math.random() * 90}px`);
+    el.style.setProperty('--rotate', `${-20 + Math.random() * 40}deg`);
+    board.appendChild(el);
+    setTimeout(() => el.remove(), 1700);
   }
 
   function removeMushroomTimeOverlay() {
@@ -1910,6 +2009,9 @@
     const { ref, runTransaction, db } = window.dbRef;
     const teamIndex = Number(myTeamIndex);
     if (!Number.isInteger(teamIndex) || teamIndex < 0 || teamIndex >= 4) return;
+
+    // 得点はFirebase、演出はこの端末だけ。処理を完全に分離する。
+    showMushroomBurst();
 
     // 🍄 ルート全体をトランザクション更新して、他端末のset()による
     // カウンター上書きを防ぐ。連打も1回ずつ確実に加算する。
@@ -2321,12 +2423,20 @@
     scheduleCameraForNextTeam(50);
   }
 
-  function calculateMovementTarget(oldPos, rawTargetPos) {
+  function calculateMovementTarget(oldPos, rawTargetPos, movingTeamIndex = gameState.currentTeamIndex) {
     let target = rawTargetPos;
     for (let step = oldPos + 1; step <= rawTargetPos; step++) {
       if (step === 5 && !gameState.lotteryTriggered) return 5;
       if (step === 10 && !gameState.quizTriggered) return 10;
-      if (step === 15 && !gameState.kmyakBattleTriggered) return 15;
+      const teamAlreadyTriggered15 = Array.isArray(gameState.kmyakBattleTriggeredTeams)
+        ? !!gameState.kmyakBattleTriggeredTeams[Number(movingTeamIndex)]
+        : !!gameState.kmyakBattleTriggered;
+      const triggered15Count = Array.isArray(gameState.kmyakBattleTriggeredTeams)
+        ? gameState.kmyakBattleTriggeredTeams.filter(Boolean).length
+        : (gameState.kmyakBattleTriggered ? 4 : 0);
+      // 15マス目のイベントは、15マス目に最初に到着した3チームだけ。
+      // 4番目のチームは15マス目で止まらず、そのまま通過する。
+      if (step === 15 && !teamAlreadyTriggered15 && triggered15Count < 3) return 15;
     }
     return target;
   }
@@ -2381,6 +2491,10 @@
         if (!Array.isArray(val.quizUsedIndices)) val.quizUsedIndices = [];
         if (val.quizRoundId === undefined) val.quizRoundId = 0;
         if (val.kmyakBattleTriggered === undefined) val.kmyakBattleTriggered = false;
+        if (!Array.isArray(val.kmyakBattleTriggeredTeams)) val.kmyakBattleTriggeredTeams = [false, false, false, false];
+        if (val.kmyakBattleTeamIndex === undefined) val.kmyakBattleTeamIndex = null;
+        if (val.kmyakBattleResultRank === undefined) val.kmyakBattleResultRank = null;
+        if (val.kmyakBattleResultOwner === undefined) val.kmyakBattleResultOwner = null;
         if (val.activeLottery === undefined) val.activeLottery = false;
         if (val.activeKmyakBattle === undefined) val.activeKmyakBattle = false;
         if (val.kmyakBattlePhase === undefined) val.kmyakBattlePhase = "idle";
@@ -2398,6 +2512,7 @@
         if (val.turnActionLockedAt === undefined) val.turnActionLockedAt = 0;
         if (val.activeMushroomTime === undefined) val.activeMushroomTime = false;
         if (val.mushroomTime === undefined) val.mushroomTime = null;
+        if (val.yoyakuEvent === undefined) val.yoyakuEvent = null;
         if (val.mushroomTimeTurnLocked === undefined) val.mushroomTimeTurnLocked = false;
         if (val.sharedCamera === undefined) val.sharedCamera = null;
         if (val.sharedSound === undefined) val.sharedSound = null;
@@ -2549,6 +2664,8 @@
         }
         handleMyakuNyokkiSync();
 
+        handleYoyakuEventSync();
+
         if (gameState.activeMushroomTime && gameState.mushroomTime) {
           renderMushroomTimeOverlay();
           if (Date.now() >= Number(gameState.mushroomTime.endAt || 0)) finishMushroomTime();
@@ -2662,20 +2779,12 @@
             !c.spectator &&
             Number(c.team) >= 0 && Number(c.team) < 4
           ) {
-            if (activeQuiz.finalGoal && Number(c.team) !== Number(activeQuiz.targetTeam)) {
-              return;
-            }
             quizProcessedChatIds.add(chatId);
             if (c.text.trim() === activeQuiz.answer) {
-              if (activeQuiz.finalGoal) handleFinalGoalQuizCorrect(c.team, c.name);
-              else handleQuizCorrect(c.team, c.name);
+              handleQuizCorrect(c.team, c.name);
             } else {
-              if (activeQuiz.finalGoal) {
-                handleFinalGoalQuizWrong(c.team, `${c.name}さんの回答「${c.text}」は不正解…！`);
-              } else {
-                soundEffect.wrong();
-                showWrongBanner(`${c.name}さんの回答「${c.text}」は不正解…！`);
-              }
+              soundEffect.wrong();
+              showWrongBanner(`${c.name}さんの回答「${c.text}」は不正解…！`);
             }
           }
         }
@@ -2743,10 +2852,18 @@
   }
 
   window.sendReaction = function(emoji) {
-    // 観覧モードはリアクション表示はできますが、ゲームイベントの得点には参加しません。
-    // キノコターイム中は参加者のみ得点カウントもしつつ、通常のリアクション表示も行う。
-    if (emoji === '🍄' && gameState.activeMushroomTime) {
-      pressMushroomTime();
+    // 🍄はキノコタイムの前後にチャットログへ流さない。
+    // 13マス目到達後のキノコタイム中は得点＋専用演出だけ行い、
+    // 終了処理～負けチームの1マス戻り完了までは完全に無効化する。
+    // ゲーム終了後も🍄をチャット/Firebaseのchatsへ送らない。
+    if (emoji === '🍄') {
+      if (gameState.activeMushroomTime) {
+        pressMushroomTime();
+        return;
+      }
+      if (gameState.mushroomTimeTurnLocked || gameState.isGameOver) {
+        return;
+      }
     }
     if (!myUserName) {
       alert("参加してからリアクションを送ってください！");
@@ -3170,6 +3287,10 @@
       quizUsedIndices: [],
       quizRoundId: 0,
       kmyakBattleTriggered: false,
+      kmyakBattleTriggeredTeams: [false, false, false, false],
+      kmyakBattleTeamIndex: null,
+      kmyakBattleResultRank: null,
+      kmyakBattleResultOwner: null,
       activeLottery: false,
       activeKmyakBattle: false,
       kmyakBattlePhase: "idle",
@@ -3279,7 +3400,10 @@
     
     if (currentTeamPos === 5 && !gameState.lotteryTriggered) return false;
     if (currentTeamPos === 10 && !gameState.quizTriggered) return false;
-    if (currentTeamPos === 15 && !gameState.kmyakBattleTriggered) return false;
+    const current15Triggered = Array.isArray(gameState.kmyakBattleTriggeredTeams)
+      ? !!gameState.kmyakBattleTriggeredTeams[currentTeam]
+      : !!gameState.kmyakBattleTriggered;
+    if (currentTeamPos === 15 && !current15Triggered && (Array.isArray(gameState.kmyakBattleTriggeredTeams) ? gameState.kmyakBattleTriggeredTeams.filter(Boolean).length < 3 : !gameState.kmyakBattleTriggered)) return false;
 
     if (myTeamIndex !== gameState.currentTeamIndex) return false;
     
@@ -3647,6 +3771,227 @@
     setTimeout(() => { if (banner) banner.remove(); }, 1500);
   }
 
+  function removeYoyakuEventOverlay() {
+    const board = document.getElementById('board');
+    if (!board) return;
+    const overlay = board.querySelector('.yoyaku-event-overlay');
+    if (overlay) overlay.remove();
+  }
+
+  function renderYoyakuEventOverlay() {
+    const board = document.getElementById('board');
+    const ev = gameState.yoyakuEvent;
+    if (!board || !ev) return;
+
+    let overlay = board.querySelector('.yoyaku-event-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'yoyaku-event-overlay';
+      board.appendChild(overlay);
+    }
+
+    const elapsed = Date.now() - Number(ev.startedAt || 0);
+    const canPress = ev.status === 'active'
+      && elapsed <= 500
+      && Number(myTeamIndex) === Number(ev.teamIndex)
+      && !isSpectator;
+
+    if (ev.status === 'active') {
+      // 説明画面の後は、yoyaku.jpg と「ここをタップ‼️」だけを表示。
+      overlay.innerHTML = `
+        <img class="yoyaku-event-image ${canPress ? '' : 'disabled'}" src="yoyaku.jpg" ${canPress ? 'onclick="pressYoyakuImage()"' : ''} draggable="false">
+        <div class="yoyaku-event-result">⬆️ここをタップ‼️</div>
+      `;
+    } else if (ev.result === 'success') {
+      overlay.innerHTML = `
+        <div class="yoyaku-success-burst" aria-hidden="true">
+          <span>🎉</span><span>✨</span><span>🎊</span><span>✨</span><span>🎉</span><span>💫</span><span>🎊</span><span>✨</span>
+        </div>
+        <div class="yoyaku-event-title yoyaku-success-title">🎉 当日予約成功‼️ 🎉</div>
+        <img class="yoyaku-event-image yoyaku-success-image" src="yoyaku2.jpg" draggable="false">
+        <div class="yoyaku-event-result">2マス進みます！</div>
+      `;
+    } else {
+      overlay.innerHTML = `
+        <div class="yoyaku-event-title">⏰ 間に合わなかった！</div>
+        <img class="yoyaku-event-image" src="yoyaku3.jpg" draggable="false">
+        <div class="yoyaku-event-result">コマはそのままです。</div>
+      `;
+    }
+  }
+
+  /* 12マス目・当日予約成功時の喜びエフェクト */
+  const yoyakuSuccessStyle = document.createElement('style');
+  yoyakuSuccessStyle.textContent = `
+    .yoyaku-success-burst {
+      position:absolute; inset:0; z-index:3; pointer-events:none; overflow:hidden;
+    }
+    .yoyaku-success-burst span {
+      position:absolute; left:50%; top:50%; font-size:clamp(22px, 7vw, 42px);
+      opacity:0; animation:yoyakuSuccessBurst 1.8s ease-out forwards;
+      filter:drop-shadow(0 3px 6px rgba(0,0,0,.35));
+    }
+    .yoyaku-success-burst span:nth-child(1){--dx:-150px;--dy:-115px;animation-delay:.02s}
+    .yoyaku-success-burst span:nth-child(2){--dx:-85px;--dy:-155px;animation-delay:.08s}
+    .yoyaku-success-burst span:nth-child(3){--dx:0px;--dy:-175px;animation-delay:.14s}
+    .yoyaku-success-burst span:nth-child(4){--dx:85px;--dy:-155px;animation-delay:.20s}
+    .yoyaku-success-burst span:nth-child(5){--dx:150px;--dy:-105px;animation-delay:.26s}
+    .yoyaku-success-burst span:nth-child(6){--dx:125px;--dy:70px;animation-delay:.32s}
+    .yoyaku-success-burst span:nth-child(7){--dx:-125px;--dy:70px;animation-delay:.38s}
+    .yoyaku-success-burst span:nth-child(8){--dx:0px;--dy:105px;animation-delay:.44s}
+    @keyframes yoyakuSuccessBurst {
+      0% { opacity:0; transform:translate(-50%,-50%) scale:.35; }
+      18% { opacity:1; transform:translate(-50%,-50%) scale(1.25); }
+      100% { opacity:0; transform:translate(calc(-50% + var(--dx)),calc(-50% + var(--dy))) scale(.9) rotate(20deg); }
+    }
+    .yoyaku-success-title { animation:yoyakuSuccessTitle .55s ease-out both; }
+    @keyframes yoyakuSuccessTitle {
+      0% { transform:scale(.55); opacity:0; }
+      70% { transform:scale(1.08); opacity:1; }
+      100% { transform:scale(1); opacity:1; }
+    }
+  `;
+  document.head.appendChild(yoyakuSuccessStyle);
+
+  function startYoyakuEvent(teamIndex) {
+    if (isSpectator || gameState.isGameOver || (gameState.yoyakuEvent && !gameState.yoyakuEvent.resultApplied)) return;
+    const { ref, runTransaction, db } = window.dbRef;
+    const now = Date.now();
+    runTransaction(ref(db, 'gameState/yoyakuEvent'), current => {
+      if (current && !current.resultApplied) return;
+      return {
+        status: 'active',
+        teamIndex: Number(teamIndex),
+        startedAt: now,
+        clickDeadlineAt: now + 500,
+        displayUntil: now + 3000,
+        result: null,
+        resultClaimed: false,
+        resultApplied: false
+      };
+    }).then(() => {
+      gameState.turnActionLocked = true;
+      syncGameState();
+      renderYoyakuEventOverlay();
+      soundEffect.yoyakuStart();
+      // yoyaku.jpg は必ず3秒表示してから結果判定・発表を行う。
+      setTimeout(() => finishYoyakuAttempt(), 3000);
+    }).catch(() => {});
+  }
+
+  window.pressYoyakuImage = function() {
+    const ev = gameState.yoyakuEvent;
+    if (!ev || ev.status !== 'active' || isSpectator) return;
+    if (Number(myTeamIndex) !== Number(ev.teamIndex)) return;
+    if (Date.now() > Number(ev.clickDeadlineAt || 0)) return;
+
+    const { ref, runTransaction, db } = window.dbRef;
+    runTransaction(ref(db, 'gameState/yoyakuEvent'), current => {
+      if (!current || current.status !== 'active' || current.result) return;
+      if (Number(current.teamIndex) !== Number(myTeamIndex)) return;
+      if (Date.now() > Number(current.clickDeadlineAt || 0)) return;
+      // 成功判定だけ先に記録し、結果画面への切り替えは3秒表示後に行う。
+      return { ...current, result: 'success' };
+    }).catch(() => {});
+  };
+
+  function finishYoyakuAttempt() {
+    const ev = gameState.yoyakuEvent;
+    if (!ev || ev.status !== 'active') return;
+    const displayUntil = Number(ev.displayUntil || (Number(ev.startedAt || 0) + 3000));
+    if (Date.now() < displayUntil) {
+      setTimeout(() => finishYoyakuAttempt(), Math.max(50, displayUntil - Date.now()));
+      return;
+    }
+    const { ref, runTransaction, db } = window.dbRef;
+    runTransaction(ref(db, 'gameState/yoyakuEvent'), current => {
+      if (!current || current.status !== 'active') return;
+      // 0.5秒以内のタップ結果を、yoyaku.jpgを3秒表示した後に確定する。
+      return { ...current, status: 'resolved', result: current.result === 'success' ? 'success' : 'fail' };
+    }).catch(() => {});
+  }
+
+  async function handleYoyakuEventSync() {
+    const ev = gameState.yoyakuEvent;
+    if (!ev || ev.resultApplied) {
+      // イベント終了後は、結果画面を再生成しない。
+      removeYoyakuEventOverlay();
+      return;
+    }
+
+    renderYoyakuEventOverlay();
+
+    if (ev.status === 'active') {
+      const displayUntil = Number(ev.displayUntil || (Number(ev.startedAt || 0) + 3000));
+      if (Date.now() >= displayUntil) {
+        finishYoyakuAttempt();
+      } else {
+        setTimeout(() => {
+          if (gameState.yoyakuEvent && gameState.yoyakuEvent.status === 'active') finishYoyakuAttempt();
+        }, Math.max(50, displayUntil - Date.now()));
+      }
+      return;
+    }
+    if (ev.resultApplied) return;
+
+    const { ref, runTransaction, db } = window.dbRef;
+    // 結果表示中に他端末が二重処理しないよう、処理担当だけを1台に確定。
+    // resultApplied は「結果表示終了」のフラグなので、ここでは変更しない。
+    const claim = await runTransaction(ref(db, 'gameState/yoyakuEvent/resultClaimed'), current => {
+      if (current === true) return;
+      return true;
+    }).catch(() => null);
+    if (!claim || !claim.committed) return;
+
+    const teamIndex = Number(ev.teamIndex);
+    const success = ev.result === 'success';
+    if (success) {
+      soundEffect.yoyakuSuccess();
+    } else {
+      soundEffect.yoyakuFail();
+    }
+    const oldPos = Number(gameState.positions[teamIndex] || 0);
+    const newPos = success ? Math.min(totalTiles - 1, oldPos + 2) : oldPos;
+
+    if (success) {
+      await movePieceStepByStep(teamIndex, oldPos, newPos, false);
+      gameState.positions[teamIndex] = newPos;
+      syncGameState();
+      updateBoardImage();
+    }
+
+    // 結果発表は2秒だけ表示し、その後は必ず画面から消す。
+    await new Promise(r => setTimeout(r, 2000));
+
+    // まずローカル画面を即時消去。遅れて届くFirebase更新でも再表示されないようにする。
+    removeYoyakuEventOverlay();
+    hideBoardMessage();
+
+    // yoyakuEventだけをFirebaseから確実に削除する。
+    // gameState全体を書き戻す方式だけにすると、別端末の古い状態で結果画面が復活する可能性がある。
+    gameState.yoyakuEvent = null;
+    gameState.turnActionLocked = true;
+    try {
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, 1000);
+        set(ref(db, 'gameState/yoyakuEvent'), null).finally(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    } catch (e) {}
+
+    // 結果表示に関するDOMを念のためもう一度完全消去。
+    removeYoyakuEventOverlay();
+    hideBoardMessage();
+    updateUI();
+
+    // イベント終了後にだけ次のチームへ進む。
+    isMoving = false;
+    advanceTurn();
+    scheduleCameraForNextTeam(50);
+  }
+
   function showOpchatAdviceBanner() {
     soundEffect.guts();
     // 他のマスイベントと同じ「メッセージ表示欄」に表示する。
@@ -3780,9 +4125,14 @@
     setTimeout(() => { if (banner) banner.remove(); }, 2000);
   }
 
-  function startKmyakBattleEvent() {
+  function startKmyakBattleEvent(teamIndex = gameState.currentTeamIndex) {
     if (isSpectator) return;
+    // イベントごとに固有IDを付け、複数端末から同じ結果処理が走らないようにする。
+    const eventId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     gameState.activeKmyakBattle = true;
+    gameState.kmyakBattleEventId = eventId;
+    gameState.kmyakBattleResolved = false;
+    gameState.kmyakBattleTeamIndex = Number(teamIndex);
     gameState.kmyakBattlePhase = "countdown";
     gameState.kmyakBattleCountdown = 3;
     gameState.kmyakBattleTimer = 5;
@@ -3796,34 +4146,62 @@
   }
 
   function runKmyakBattleSequence() {
-    const { ref, update, db } = window.dbRef;
+    const { ref, runTransaction, db } = window.dbRef;
+    const eventId = String(gameState.kmyakBattleEventId || '');
+    if (!eventId) return;
 
     let cd = 3;
     const cdInterval = setInterval(() => {
       cd--;
       if (cd > 0) {
-        gameState.kmyakBattleCountdown = cd;
-        update(ref(db, 'gameState'), { kmyakBattleCountdown: cd });
+        // 別端末が結果確定した後に、古いカウントダウンがFirebaseへ
+        // 戻ってしまわないよう、イベントIDとphaseをサーバー側でも確認する。
+        runTransaction(ref(db, 'gameState'), current => {
+          if (!current || String(current.kmyakBattleEventId || '') !== eventId ||
+              !current.activeKmyakBattle || current.kmyakBattlePhase !== 'countdown') return;
+          current.kmyakBattleCountdown = cd;
+          return current;
+        }).catch(() => {});
       } else {
         clearInterval(cdInterval);
-        gameState.kmyakBattlePhase = "battle";
-        gameState.kmyakBattleTimer = 5;
-        update(ref(db, 'gameState'), { kmyakBattlePhase: "battle", kmyakBattleTimer: 5 });
+        runTransaction(ref(db, 'gameState'), current => {
+          if (!current || String(current.kmyakBattleEventId || '') !== eventId ||
+              !current.activeKmyakBattle || current.kmyakBattlePhase !== 'countdown') return;
+          current.kmyakBattlePhase = 'battle';
+          current.kmyakBattleTimer = 5;
+          return current;
+        }).then(result => {
+          if (!result || !result.committed) return;
+          // 結果表示に移っていた場合、この端末の古いタイマーはここで終了。
+          if (String(gameState.kmyakBattleEventId || '') !== eventId ||
+              !gameState.activeKmyakBattle || gameState.kmyakBattlePhase !== 'battle') return;
 
-        soundEffect.event();
-        scheduleCpuKmyakTaps();
+          soundEffect.event();
+          scheduleCpuKmyakTaps();
 
-        let timer = 5;
-        const battleInterval = setInterval(() => {
-          timer--;
-          if (timer > 0) {
-            gameState.kmyakBattleTimer = timer;
-            update(ref(db, 'gameState'), { kmyakBattleTimer: timer });
-          } else {
-            clearInterval(battleInterval);
-            resolveKmyakBattleHost();
-          }
-        }, 1000);
+          let timer = 5;
+          const battleInterval = setInterval(() => {
+            // 他端末が結果処理を確定したら、古いタイマーは一切Firebaseへ書かない。
+            if (String(gameState.kmyakBattleEventId || '') !== eventId ||
+                !gameState.activeKmyakBattle || gameState.kmyakBattlePhase !== 'battle') {
+              clearInterval(battleInterval);
+              return;
+            }
+
+            timer--;
+            if (timer > 0) {
+              runTransaction(ref(db, 'gameState'), current => {
+                if (!current || String(current.kmyakBattleEventId || '') !== eventId ||
+                    !current.activeKmyakBattle || current.kmyakBattlePhase !== 'battle') return;
+                current.kmyakBattleTimer = timer;
+                return current;
+              }).catch(() => {});
+            } else {
+              clearInterval(battleInterval);
+              resolveKmyakBattleHost();
+            }
+          }, 1000);
+        }).catch(() => {});
       }
     }, 1000);
   }
@@ -3859,58 +4237,119 @@
     });
   }
 
-  function resolveKmyakBattleHost() {
+  async function resolveKmyakBattleHost() {
     cpuKmyakTapTimers.forEach(t => clearInterval(t));
     cpuKmyakTapTimers = [];
+
+    const eventId = String(gameState.kmyakBattleEventId || "");
+    if (!eventId) return;
+
+    // 同じイベントの結果処理を1端末だけが担当する。
+    // これがないと、多人数接続時に複数端末が同時に advanceTurn() を実行し、
+    // 結果表示の再発生やターンの二重送りが起こる。
+    const { ref, runTransaction, db } = window.dbRef;
+    const claim = await runTransaction(ref(db, `gameState/kmyakBattleResolveClaims/${eventId}`), current => {
+      if (current) return;
+      return { resolvedAt: Date.now() };
+    }).catch(() => null);
+    if (!claim || !claim.committed) return;
+
+    const eventTeamIndex = Number(gameState.kmyakBattleTeamIndex);
+    if (!Number.isInteger(eventTeamIndex) || eventTeamIndex < 0 || eventTeamIndex > 3) return;
+
     let averages = [0, 0, 0, 0];
     for (let i = 0; i < 4; i++) {
-      const totalTaps = gameState.kmyakTaps[i] || 0;
+      const totalTaps = Number(gameState.kmyakTaps?.[i] || 0);
       const memberCount = Math.max(1, teamPlayers[i].filter(name => !name.includes("募集中")).length);
       averages[i] = totalTaps / memberCount;
     }
 
-    let maxAvg = Math.max(...averages);
-    let winningTeams = [];
-    if (maxAvg > 0) {
-      averages.forEach((avg, idx) => {
-        if (avg === maxAvg) winningTeams.push(idx);
-      });
-    }
+    // 連打数（1人あたり平均）を順位化。完全同率の場合はチーム番号で決める。
+    const ranking = [0, 1, 2, 3].sort((a, b) => {
+      if (averages[b] !== averages[a]) return averages[b] - averages[a];
+      return a - b;
+    });
+    const rank = ranking.indexOf(eventTeamIndex) + 1;
 
     gameState.kmyakBattlePhase = "result";
-    gameState.winningKmyakTeams = winningTeams;
+    gameState.kmyakBattleResultRank = rank;
+    gameState.kmyakBattleResultOwner = eventTeamIndex;
+    gameState.kmyakBattleResolved = true;
     syncGameState();
 
-    if (winningTeams.length > 0) {
-      let teamNamesStr = winningTeams.map(idx => teamNames[idx]).join("・");
+    const teamName = teamNames[eventTeamIndex];
+    if (rank === 1) {
       soundEffect.goal();
-      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamNamesStr} が平均タップ数 ${maxAvg.toFixed(1)} で勝利！(2マス進む)`);
-    } else {
+      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は連打バトル1位！大混雑を抜け出すことに成功。2マス進む。`);
+    } else if (rank === 4) {
       soundEffect.wrong();
-      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：誰もボタンを押さなかったため、どのチームも進みませんでした。`);
+      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は4位。大混雑を抜け出せなかった。1回休み。`);
+    } else {
+      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は${rank}位。今回はそのままです。`);
     }
 
-    setTimeout(() => {
-      gameState.activeKmyakBattle = false;
-      gameState.kmyakBattlePhase = "idle";
-      syncGameState();
+    setTimeout(async () => {
+      // 結果処理は「イベント終了＋位置更新＋次チームへの交代」を
+      // Firebaseの1回のトランザクションで確定する。
+      // これにより、10人以上の端末から古いgameStateが戻ってきても
+      // 結果表示の再発生や、同じチームでターンが止まることを防ぐ。
+      if (String(gameState.kmyakBattleEventId || "") !== eventId) return;
 
+      const oldPos = Number(gameState.positions[eventTeamIndex] || 0);
       const goalIndex = totalTiles - 1;
-      let promises = winningTeams.map(tIdx => {
-        const oldPos = gameState.positions[tIdx];
-        const rawTarget = Math.min(goalIndex, oldPos + 2);
-        const forwardTarget = calculateMovementTarget(oldPos, rawTarget);
-        return movePieceStepByStep(tIdx, oldPos, forwardTarget, false).then(() => {
-          gameState.positions[tIdx] = forwardTarget;
-          syncGameState();
-          showSquareMessage(tIdx, forwardTarget);
-        });
-      });
+      const forwardTarget = rank === 1 ? Math.min(goalIndex, oldPos + 2) : oldPos;
+      const { ref, runTransaction, db } = window.dbRef;
 
-      Promise.all(promises).then(() => {
-        advanceTurn();
-        scheduleCameraForNextTeam(3000);
-      });
+      // 移動アニメーションを先に共有。ゲーム状態そのものは下のトランザクションで確定する。
+      if (rank === 1 && forwardTarget > oldPos) {
+        publishSharedMoveEvent(eventTeamIndex, oldPos, forwardTarget, false);
+      }
+
+      const finalize = await runTransaction(ref(db, 'gameState'), current => {
+        if (!current) return;
+        if (String(current.kmyakBattleEventId || '') !== eventId) return;
+        if (!current.activeKmyakBattle || current.kmyakBattlePhase !== 'result') return;
+
+        const currentTeam = Number(current.currentTeamIndex);
+        const players = getRealTeamPlayers(currentTeam);
+        const playerIndices = Array.isArray(current.playerIndices) ? [...current.playerIndices] : [0,0,0,0];
+        if (players.length > 0) {
+          playerIndices[currentTeam] = (Number(playerIndices[currentTeam] || 0) + 1) % players.length;
+        } else {
+          playerIndices[currentTeam] = 0;
+        }
+
+        const positions = Array.isArray(current.positions) ? [...current.positions] : [0,0,0,0];
+        if (rank === 1) positions[eventTeamIndex] = forwardTarget;
+
+        const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];
+        if (rank === 4) skipTurns[eventTeamIndex] = true;
+
+        return {
+          ...current,
+          positions,
+          skipTurns,
+          playerIndices,
+          currentTeamIndex: (currentTeam + 1) % 4,
+          turnActionLocked: false,
+          turnActionLockedAt: 0,
+          activeKmyakBattle: false,
+          kmyakBattlePhase: 'idle',
+          kmyakBattleTeamIndex: null,
+          kmyakBattleResultRank: null,
+          kmyakBattleResultOwner: null,
+          kmyakBattleResolved: false
+        };
+      }).catch(() => null);
+
+      if (!finalize || !finalize.committed) return;
+
+      gameState = finalize.snapshot.val() || gameState;
+      removeKmyakBattleOverlay();
+      updateBoardImage();
+      updateUI();
+      isMoving = false;
+      scheduleCameraForNextTeam(50);
     }, 4500);
   }
 
@@ -3948,9 +4387,16 @@
         avgTexts.push(`${teamNames[i]}: ${avg.toFixed(1)}回`);
       }
 
-      const winners = (gameState.winningKmyakTeams || []).length > 0 
-        ? gameState.winningKmyakTeams.map(idx => teamNames[idx]).join("・")
-        : "なし（誰も押しませんでした）";
+      const owner = Number(gameState.kmyakBattleResultOwner);
+      const rank = Number(gameState.kmyakBattleResultRank);
+      let resultText = "";
+      if (rank === 1) {
+        resultText = `${teamNames[owner] || ""}：大混雑を抜け出すことに成功。2マス進む。`;
+      } else if (rank === 4) {
+        resultText = `${teamNames[owner] || ""}：大混雑を抜け出せなかった。1回休み。`;
+      } else if (rank === 2 || rank === 3) {
+        resultText = `${teamNames[owner] || ""}：${rank}位。そのままです。`;
+      }
 
       overlay.innerHTML = `
         <div class="kmyak-battle-title">🎉 大混雑脱出連打ゲーム 結果 🎉</div>
@@ -3959,7 +4405,7 @@
           ${avgTexts.join(" | ")}
         </div>
         <div class="kmyak-battle-desc" style="font-size:12px; color:#ffeb3b; font-weight:bold;">
-          ${(gameState.winningKmyakTeams || []).length > 0 ? `勝利チーム: ${winners} (2マス進む)` : `誰も押さなかったため、どのチームも進みません`}
+          ${resultText}
         </div>
       `;
     }
@@ -3969,158 +4415,6 @@
     const board = document.getElementById('board');
     const overlay = board.querySelector('.kmyak-battle-overlay');
     if (overlay) overlay.remove();
-  }
-
-  async function startFinalGoalQuiz(teamIndex) {
-    if (isSpectator || gameState.isGameOver) return;
-
-    gameState.quizTurnLocked = true;
-    gameState.quizCountdownActive = false;
-    gameState.quizCountdown = 0;
-    gameState.quizRoundCountdownStarted = false;
-    gameState.activeQuiz = null;
-    syncGameState();
-    updateUI();
-
-    soundEffect.finalTrial();
-    showScreenMessage(
-      '<div style="font-size:25px; line-height:1.55; font-weight:900;">クイズ館長からの挑戦状‼️<br>ゴールしたいならわたしのクイズを解かんかい‼️</div>',
-      2500
-    );
-
-    await new Promise(resolve => setTimeout(resolve, 2500));
-    if (gameState.isGameOver) return;
-    startQuizCountdown(() => startFinalGoalQuizRound(teamIndex));
-  }
-
-  function startFinalGoalQuizRound(teamIndex) {
-    if (gameState.isGameOver) return;
-
-    const chosenIdx = Math.floor(Math.random() * allQuizPool.length);
-    const q = allQuizPool[chosenIdx];
-    quizProcessedChatIds.clear();
-    quizAnswerLocked = false;
-
-    const roundId = Date.now();
-    const startTime = Date.now();
-
-    activeQuiz = {
-      emojis: q.emojis,
-      answer: q.answer,
-      hint: q.hint,
-      active: true,
-      questionNumber: 1,
-      startTime,
-      roundId,
-      usedIndices: [],
-      finalGoal: true,
-      targetTeam: Number(teamIndex)
-    };
-
-    gameState.activeQuiz = activeQuiz;
-    gameState.quizTurnLocked = true;
-    gameState.quizRoundCountdownStarted = false;
-    syncGameState();
-    updateUI();
-
-    soundEffect.event();
-    pushLog(`【最後の試練】${teamNames[teamIndex]}だけがクイズに挑戦！制限時間15秒。`);
-    showQuizOverlay(activeQuiz);
-    startQuizTimer(startTime);
-    scheduleCpuQuizAnswers();
-  }
-
-  async function handleFinalGoalQuizCorrect(teamIndex, playerName) {
-    if (!activeQuiz || !activeQuiz.active || !activeQuiz.finalGoal ||
-        Number(activeQuiz.targetTeam) !== Number(teamIndex) || quizAnswerLocked) return;
-
-    const roundId = Number(activeQuiz.roundId || activeQuiz.startTime || 0);
-    const { ref, runTransaction, db } = window.dbRef;
-    const claim = await runTransaction(ref(db, `gameState/quizAnswerClaims/${roundId}`), current => {
-      if (current) return;
-      return { teamIndex, playerName, claimedAt: Date.now(), type: "finalGoalCorrect" };
-    }).catch(() => null);
-    if (!claim || !claim.committed) return;
-
-    quizAnswerLocked = true;
-    activeQuiz.active = false;
-    if (quizTimer) { clearInterval(quizTimer); quizTimer = null; }
-
-    const tIdx = Number(teamIndex);
-    gameState.activeQuiz = null;
-    gameState.quizTurnLocked = true;
-    syncGameState();
-    closeQuizOverlay();
-    hideBoardMessage();
-
-    soundEffect.goal();
-    pushLog(`🎉 最後の試練クリア！ ${teamNames[tIdx]}（${playerName}）が正解！ゴールです！`);
-
-    showSquareMessage(tIdx, totalTiles - 1);
-    await waitForSquareMessage(3000);
-
-    soundEffect.goal();
-    const winningMembers = Object.values(allUsers)
-      .filter(u => u.team === tIdx)
-      .map(u => u.name)
-      .join("、");
-    pushLog(`🎉 優勝：${teamNames[tIdx]}！ おめでとう！ 🎉`);
-    showWinBanner(teamNames[tIdx], winningMembers);
-    gameState.positions[tIdx] = totalTiles - 1;
-    gameState.isGameOver = true;
-    gameState.quizTurnLocked = false;
-    syncGameState();
-    updateUI();
-    isMoving = false;
-    zoomOutAfterGameOver();
-  }
-
-  async function handleFinalGoalQuizWrong(teamIndex, message) {
-    if (!activeQuiz || !activeQuiz.active || !activeQuiz.finalGoal ||
-        Number(activeQuiz.targetTeam) !== Number(teamIndex) || quizAnswerLocked) return;
-
-    const roundId = Number(activeQuiz.roundId || activeQuiz.startTime || 0);
-    const { ref, runTransaction, db } = window.dbRef;
-    const claim = await runTransaction(ref(db, `gameState/quizAnswerClaims/${roundId}`), current => {
-      if (current) return;
-      return { teamIndex, message, claimedAt: Date.now(), type: "finalGoalWrong" };
-    }).catch(() => null);
-    if (!claim || !claim.committed) return;
-
-    quizAnswerLocked = true;
-    activeQuiz.active = false;
-    if (quizTimer) { clearInterval(quizTimer); quizTimer = null; }
-
-    const tIdx = Number(teamIndex);
-    gameState.activeQuiz = null;
-    gameState.quizTurnLocked = true;
-    syncGameState();
-    closeQuizOverlay();
-    hideBoardMessage();
-
-    soundEffect.wrong();
-    pushLog(`❌ 最後の試練不正解！ ${teamNames[tIdx]} は3マス戻ります。`);
-
-    const oldPos = gameState.positions[tIdx];
-    const backTarget = Math.max(0, oldPos - 3);
-    await movePieceStepByStep(tIdx, oldPos, backTarget, true);
-    gameState.positions[tIdx] = backTarget;
-    syncGameState();
-    updateBoardImage();
-
-    gameState.quizTurnLocked = false;
-    isMoving = false;
-    syncGameState();
-    advanceTurn();
-    scheduleCameraForNextTeam(50);
-  }
-
-  function endFinalGoalQuizByTimeout() {
-    if (!activeQuiz || !activeQuiz.active || !activeQuiz.finalGoal) return;
-    handleFinalGoalQuizWrong(
-      Number(activeQuiz.targetTeam),
-      '時間切れ！15秒以内に正解できませんでした。'
-    );
   }
 
   function triggerQuizEvent() {
@@ -4280,15 +4574,9 @@
     overlay.className = 'quiz-overlay';
     overlay.id = 'quiz-overlay';
 
-    quizTimeRemaining = qData.finalGoal ? 15 : 30;
+    quizTimeRemaining = 30;
 
-    overlay.innerHTML = qData.finalGoal ? `
-      <div class="quiz-title" style="font-size:16px;">クイズ館長からの挑戦状‼️</div>
-      <div class="quiz-timer">残り時間: <span id="quiz-timer-sec">${quizTimeRemaining}</span>秒</div>
-      <div class="quiz-emojis">${qData.emojis}</div>
-      <div class="quiz-hint">ヒント: ${qData.hint}</div>
-      <div style="font-size:10px; color:#555;">${teamNames[qData.targetTeam]}だけが挑戦できます。チャット欄に「ひらがな」で答えてください。</div>
-    ` : `
+    overlay.innerHTML = `
       <div class="quiz-title">会場でクイズ民と遭遇😃！クイズバトルだ！ (第${qData.questionNumber}/2問) 🧠</div>
       <div class="quiz-timer">残り時間: <span id="quiz-timer-sec">${quizTimeRemaining}</span>秒</div>
       <div class="quiz-emojis">${qData.emojis}</div>
@@ -4327,15 +4615,13 @@
     if (quizTimer) clearInterval(quizTimer);
 
     const elapsed = Math.floor((Date.now() - Number(startTime || Date.now())) / 1000);
-    const timeLimit = activeQuiz && activeQuiz.finalGoal ? 15 : 30;
-    quizTimeRemaining = Math.max(0, timeLimit - elapsed);
+    quizTimeRemaining = Math.max(0, 30 - elapsed);
 
     const secSpan = document.getElementById('quiz-timer-sec');
     if (secSpan) secSpan.innerText = quizTimeRemaining;
 
     if (quizTimeRemaining <= 0) {
-      if (activeQuiz && activeQuiz.finalGoal) endFinalGoalQuizByTimeout();
-      else endQuizRound("時間切れ！正解者なしでした。");
+      endQuizRound("時間切れ！正解者なしでした。");
       return;
     }
 
@@ -4347,8 +4633,7 @@
       if (quizTimeRemaining <= 0) {
         clearInterval(quizTimer);
         quizTimer = null;
-        if (activeQuiz && activeQuiz.finalGoal) endFinalGoalQuizByTimeout();
-        else endQuizRound("時間切れ！正解者なしでした。");
+        endQuizRound("時間切れ！正解者なしでした。");
       }
     }, 1000);
   }
@@ -4389,10 +4674,26 @@
     const rawTarget = Math.min(goalIndex, oldPos + 2);
     const forwardTarget = calculateMovementTarget(oldPos, rawTarget);
 
-    movePieceStepByStep(teamIndex, oldPos, forwardTarget, false).then(() => {
+    movePieceStepByStep(teamIndex, oldPos, forwardTarget, false).then(async () => {
+      // クイズの追加移動は、古いgameState全体をset()してしまうと、
+      // 別端末の古いpositionsで正解チームの位置が元に戻ることがある。
+      // 最新のFirebase状態に対して「このチームの位置だけ」を確定する。
+      const positionRef = ref(db, `gameState/positions/${teamIndex}`);
+      const positionClaim = await runTransaction(positionRef, current => {
+        return forwardTarget;
+      }).catch(() => null);
+
+      // Firebaseで確定した位置をローカル状態にも反映。
       gameState.positions[teamIndex] = forwardTarget;
-      syncGameState();
-      closeQuizOverlay();
+      if (positionClaim && positionClaim.committed) {
+        gameState.positions[teamIndex] = Number(positionClaim.snapshot.val());
+      }
+      updateBoardImage();
+      updateUI();
+
+      // closeQuizOverlay()内の全体syncは、古いpositionsを再送する可能性があるため、
+      // このクイズ処理では同期せずに閉じる。
+      closeQuizOverlay(false);
 
       setTimeout(() => {
         startNextQuizRound();
@@ -4431,7 +4732,7 @@
     }, 1500);
   }
 
-  function closeQuizOverlay() {
+  function closeQuizOverlay(sync = true) {
     cpuQuizTimers.forEach(t => clearTimeout(t));
     cpuQuizTimers = [];
     if (quizTimer) {
@@ -4446,7 +4747,7 @@
     activeQuiz = null;
     gameState.activeQuiz = null;
     hideBoardMessage();
-    syncGameState();
+    if (sync) syncGameState();
     updateUI();
     requestAnimationFrame(() => refreshDiceAvailability());
   }
@@ -4484,49 +4785,48 @@
     // 他端末からの共有イベントでは効果音を再共有しない。
     soundEffect.myak5Reveal();
 
-    const overlay = document.createElement('div');
-    overlay.className = 'myak5-reveal-overlay';
-    overlay.style.cssText = 'position:absolute;inset:0;z-index:5200;display:flex;align-items:center;justify-content:center;overflow:hidden;background:radial-gradient(circle at center,rgba(25,40,75,.42),rgba(0,0,20,.78) 72%,rgba(0,0,10,.9));opacity:0;animation:myak5FadeIn 1.2s ease-out forwards;';
-
-    for (let i = 0; i < 34; i++) {
-      const star = document.createElement('div');
-      const size = 2 + Math.random() * 5;
-      star.style.cssText = `position:absolute;left:${Math.random()*100}%;top:${Math.random()*100}%;width:${size}px;height:${size}px;border-radius:50%;background:rgba(255,255,255,${0.35+Math.random()*0.55});box-shadow:0 0 ${8+Math.random()*15}px rgba(170,230,255,.9);animation:myak5Star ${2.2+Math.random()*2.2}s ease-in-out ${Math.random()*0.8}s infinite alternate;`;
-      overlay.appendChild(star);
-    }
-
-    const aura = document.createElement('div');
-    aura.style.cssText = 'position:absolute;left:50%;top:50%;width:min(78vw,520px);height:min(78vw,520px);transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.32),rgba(140,220,255,.12) 35%,transparent 68%);filter:blur(4px);animation:myak5Aura 3.8s ease-in-out infinite;';
-    overlay.appendChild(aura);
-
-    const img = document.createElement('img');
-    img.src = 'myak5.jpg';
-    img.alt = '';
-    img.draggable = false;
-    img.style.cssText = 'position:relative;z-index:2;width:min(68vw,420px);max-height:72vh;object-fit:contain;border-radius:22px;opacity:0;transform:scale(.78);filter:drop-shadow(0 0 18px rgba(255,255,255,.75)) drop-shadow(0 0 45px rgba(120,220,255,.6));animation:myak5ImageIn 1.8s cubic-bezier(.16,.8,.2,1) .25s forwards;';
-    overlay.appendChild(img);
-
-    board.appendChild(overlay);
-
-    // 表示開始を画像の読み込み完了後に合わせる（キャッシュ済みなら即時）。
+    // 画像を完全に読み込んでから画面へ追加する。
+    // これにより「画像が表示される前にフェードアウトが始まる」現象を防ぐ。
     preloadMyak5Image().then(() => {
-      if (!overlay.isConnected) return;
-      requestAnimationFrame(() => {
-        if (!overlay.isConnected) return;
-        overlay.style.animation = 'myak5FadeIn 1.2s ease-out forwards';
-      });
-    });
+      if (!board.isConnected) return;
 
-    // 画像の表示時間は5秒を確保し、その後1.2秒かけて消す。
-    myak5RevealTimer = setTimeout(() => {
-      if (!overlay.isConnected) return;
-      overlay.style.animation = 'myak5FadeOut 1.2s ease-in forwards';
-      myak5RevealRemoveTimer = setTimeout(() => {
-        if (overlay.isConnected) overlay.remove();
-        myak5RevealRemoveTimer = null;
-      }, 1250);
-      myak5RevealTimer = null;
-    }, 5000);
+      const overlay = document.createElement('div');
+      overlay.className = 'myak5-reveal-overlay';
+      // 他の演出より確実に前面へ。フェードインは使わず、最初から完全表示する。
+      overlay.style.cssText = 'position:absolute;inset:0;z-index:99999 !important;display:flex;align-items:center;justify-content:center;overflow:hidden;background:radial-gradient(circle at center,rgba(25,40,75,.42),rgba(0,0,20,.78) 72%,rgba(0,0,10,.9));opacity:1;pointer-events:none;';
+
+      for (let i = 0; i < 34; i++) {
+        const star = document.createElement('div');
+        const size = 2 + Math.random() * 5;
+        star.style.cssText = `position:absolute;left:${Math.random()*100}%;top:${Math.random()*100}%;width:${size}px;height:${size}px;border-radius:50%;background:rgba(255,255,255,${0.35+Math.random()*0.55});box-shadow:0 0 ${8+Math.random()*15}px rgba(170,230,255,.9);animation:myak5Star ${2.2+Math.random()*2.2}s ease-in-out ${Math.random()*0.8}s infinite alternate;`;
+        overlay.appendChild(star);
+      }
+
+      const aura = document.createElement('div');
+      aura.style.cssText = 'position:absolute;left:50%;top:50%;width:min(78vw,520px);height:min(78vw,520px);transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.32),rgba(140,220,255,.12) 35%,transparent 68%);filter:blur(4px);animation:myak5Aura 3.8s ease-in-out infinite;';
+      overlay.appendChild(aura);
+
+      const img = document.createElement('img');
+      img.src = 'myak5.jpg';
+      img.alt = '';
+      img.draggable = false;
+      // 画像そのものも最前面・完全表示。画像のフェードインアニメーションは使わない。
+      img.style.cssText = 'position:relative;z-index:100000 !important;width:min(68vw,420px);max-height:72vh;object-fit:contain;border-radius:22px;opacity:1 !important;visibility:visible !important;filter:drop-shadow(0 0 18px rgba(255,255,255,.75)) drop-shadow(0 0 45px rgba(120,220,255,.6));';
+      overlay.appendChild(img);
+
+      board.appendChild(overlay);
+
+      // 画像が見えてから5秒間そのまま表示し、その後1.2秒でフェードアウト。
+      myak5RevealTimer = setTimeout(() => {
+        if (!overlay.isConnected) return;
+        overlay.style.animation = 'myak5FadeOut 1.2s ease-in forwards';
+        myak5RevealRemoveTimer = setTimeout(() => {
+          if (overlay.isConnected) overlay.remove();
+          myak5RevealRemoveTimer = null;
+        }, 1250);
+        myak5RevealTimer = null;
+      }, 5000);
+    });
   }
 
   function triggerSpecialEffect(effectType, sync = true) {
@@ -5009,9 +5309,10 @@
     return overlay;
   }
 
-  async function handleGoalContact(teamIndex, exactGoal, goalEventRoll = Math.random()) {
+  async function handleGoalContact(teamIndex, exactGoal) {
     // ゴールに触れたら、5%で大混雑、次の5%でオールナイト万博。
     // 1回のゴール接触につき一度だけ判定するので、2つは同時発生しない。
+    const goalEventRoll = Math.random();
 
     if (goalEventRoll < 0.05) {
       soundEffect.return();
@@ -5083,22 +5384,20 @@
       return { type: 'allnight' };
     }
 
-    // 大渋滞・オールナイト万博が起こらなかった「20マス目ぴったり」は、
-    // 100%で最後の1問へ。通常の20マス目アナウンスはここでは出さない。
-    if (exactGoal) {
-      await startFinalGoalQuiz(teamIndex);
-      return { type: 'finalGoalQuiz' };
-    }
-
     return { type: 'normal' };
   }
 
   async function executeDiceRoll(options = {}) {
+    // サイコロを押したユーザー操作の中でAudioContextを先に解除しておく。
+    // 12マス目イベントはサイコロ操作から数秒後に始まるため、ここで解除しておかないと
+    // iPhone等でWeb Audioの自動再生制限によりイベント音が無音になることがある。
+    try { getAudioContext().resume(); } catch (e) {}
+
     const isProxyRoll = !!options.proxy;
     const isRecoveryRoll = !!options.recovery;
     const isCpuRoll = !!options.cpu;
 
-    if (isSpectator || !gameState.gameStarted || (isMoving && !isRecoveryRoll) || gameState.isGameOver ||
+    if (!gameState.gameStarted || (isMoving && !isRecoveryRoll) || gameState.isGameOver ||
         gameState.activeQuiz || gameState.quizTurnLocked || gameState.quizCountdownActive ||
         gameState.quizRoundCountdownStarted || gameState.activeLottery || gameState.activeKmyakBattle ||
         gameState.activeMyakuNyokki || gameState.activeMushroomTime || gameState.mushroomTimeTurnLocked) return;
@@ -5114,8 +5413,6 @@
     const expectedPlayers = getRealTeamPlayers(expectedTeam);
 
     if (!isProxyRoll && !isCpuRoll && !isMyTurn()) return;
-    if (isRecoveryRoll && isSpectator) return;
-
     const { ref, runTransaction, db } = window.dbRef;
     const lockClaim = await runTransaction(ref(db, 'gameState'), current => {
       if (!current || !current.gameStarted || current.isGameOver) return;
@@ -5200,29 +5497,14 @@
       syncGameState();
       updateBoardImage();
 
-      // ぴったりゴールは、先に大渋滞・オールナイト万博の判定を行う。
-      // その2つが起きない場合だけ、20マス目アナウンスを出さず最終試練へ。
-      let goalEventRoll = null;
+      // ぴったりゴールなら20マス目のアナウンスを表示。
+      // オーバーした場合は20マス目のアナウンスを表示せず、そのまま折り返す。
       if (rawTarget === goalIndex) {
-        goalEventRoll = Math.random();
-        if (goalEventRoll < 0.10) {
-          showSquareMessage(teamIndex, goalIndex);
-          await waitForSquareMessage(3000);
-        }
+        showSquareMessage(teamIndex, goalIndex);
+        await waitForSquareMessage(3000);
       }
 
-      const goalEvent = await handleGoalContact(
-        teamIndex,
-        rawTarget === goalIndex,
-        goalEventRoll === null ? Math.random() : goalEventRoll
-      );
-
-      if (goalEvent.type === 'finalGoalQuiz') {
-        isMoving = false;
-        refreshDiceAvailability();
-        updateUI();
-        return;
-      }
+      const goalEvent = await handleGoalContact(teamIndex, rawTarget === goalIndex);
 
       if (goalEvent.type === 'allnight' || goalEvent.type === 'jam') {
         isMoving = false;
@@ -5252,20 +5534,18 @@
         targetPos = goalIndex;
       }
     } else {
-      const triggerOpchatAdvice = targetPos === 12 && Math.random() < 0.50;
       const triggerProducerMeet = targetPos === 7 && Math.random() < 0.10;
       await movePieceStepByStep(teamIndex, oldPos, targetPos, false);
       gameState.positions[teamIndex] = targetPos;
       syncGameState();
       updateBoardImage();
-      if (!triggerOpchatAdvice && !triggerProducerMeet) {
+      if (!triggerProducerMeet) {
         showSquareMessage(teamIndex, targetPos);
         await waitForSquareMessage(3000);
       }
 
       // マス13のアナウンス後に「キノコターイム！」を開催。
-      // オプチャの50%イベントが発生した場合は、その効果が終わった後に開始する。
-      if ((diceLandedPos === 13 || (triggerOpchatAdvice && targetPos === 13)) && !gameState.activeMushroomTime && !gameState.isGameOver) {
+      if (diceLandedPos === 13 && !gameState.activeMushroomTime && !gameState.isGameOver) {
         isMoving = false;
         startMushroomTimeEvent();
         await new Promise(resolve => {
@@ -5296,38 +5576,35 @@
         return;
       }
 
-      if (triggerOpchatAdvice) {
-        // マス12の通常アナウンスを表示してから、オプチャ効果→マス13→キノコターイム！へ進む。
-        showSquareMessage(teamIndex, 12);
-        await waitForSquareMessage(3000);
-        showOpchatAdviceBanner();
-        pushLog(`✊ ${teamNames[teamIndex]} がマス12で当日予約に成功！1マス進みます！`);
-        await new Promise(r => setTimeout(r, 2200));
-        const effectStartPos = targetPos;
-        const effectTarget = Math.min(goalIndex, effectStartPos + 1);
-        await movePieceStepByStep(teamIndex, effectStartPos, effectTarget, false);
-        gameState.positions[teamIndex] = effectTarget;
-        syncGameState();
-        updateBoardImage();
-        showSquareMessage(teamIndex, effectTarget);
-        await waitForSquareMessage(3000);
-        targetPos = effectTarget;
-        // オプチャイベントでマス13へ進んだ後、キノコターイム！を開始。
-        if (triggerOpchatAdvice && targetPos === 13 && !gameState.activeMushroomTime && !gameState.isGameOver) {
-          isMoving = false;
-          startMushroomTimeEvent();
-          await new Promise(resolve => {
-            const wait = setInterval(() => {
-              if (!gameState.activeMushroomTime && gameState.mushroomTime && gameState.mushroomTime.resultApplied) {
-                clearInterval(wait);
-                resolve();
-              }
-            }, 150);
-            setTimeout(() => { clearInterval(wait); resolve(); }, 10000);
-          });
-          return;
-        }
-      } else if (triggerProducerMeet) {
+      if (targetPos === 12 && !gameState.isGameOver) {
+        isMoving = false;
+        // オプチャからの通知らしいアラーム音を全端末で共有。
+        // サイコロを押した時点でAudioContextを解除し、さらにFirebase経由でも共有する。
+        soundEffect.opchatAlarm();
+        publishSharedSound('opchatAlarm');
+        showScreenMessage(
+          `16:50 オプチャから通知が届く！<br>まもなく17時に電力館、nullダイアログ、ガンダム、いのちの未来の当日予約開放です📢`,
+          3000
+        );
+        await new Promise(r => setTimeout(r, 3000));
+        showScreenMessage(
+          `チームで当日予約に挑戦だ‼️<br>※予約画面が表示されたら素早くタップ`,
+          2000
+        );
+        await new Promise(r => setTimeout(r, 2000));
+        startYoyakuEvent(teamIndex);
+        await new Promise(resolve => {
+          const wait = setInterval(() => {
+            if (!gameState.yoyakuEvent || gameState.yoyakuEvent.resultApplied) {
+              clearInterval(wait);
+              resolve();
+            }
+          }, 100);
+          setTimeout(() => { clearInterval(wait); resolve(); }, 10000);
+        });
+        return;
+      }
+      if (triggerProducerMeet) {
         showSignBanner();
         pushLog(`😊 ${teamNames[teamIndex]} がマス7でシグネチャーパビリオンのプロデューサーに遭遇！2マス進みます！`);
         await new Promise(r => setTimeout(r, 2200));
@@ -5433,8 +5710,8 @@
         pushLog(`🛸 ${teamNames[teamIndex]} がマス18に到着！幻想的なドローンショーが始まりました！`);
         showScreenMessage(`🛸✨ 願いを心に思い浮かべて<br>　　 夜空を見上げてみてください ✨🛸`, 3000);
         await waitForSquareMessage(3500);
-        // ドローンショーとアナウンスが終わった後、10%だけ特別演出。
-        if (Math.random() < 0.10) {
+        // ドローンショーとアナウンスが終わった後、20%で特別演出。
+        if (Math.random() < 0.20) {
           showMyak5Reveal(true);
           await new Promise(r => setTimeout(r, 6500));
         }
@@ -5472,12 +5749,25 @@
       return;
     }
 
-    if (targetPos === 15 && !gameState.kmyakBattleTriggered) {
-      gameState.kmyakBattleTriggered = true;
-      syncGameState();
-      isMoving = false;
-      startKmyakBattleEvent();
-      return;
+    if (targetPos === 15) {
+      const triggeredTeams = Array.isArray(gameState.kmyakBattleTriggeredTeams)
+        ? gameState.kmyakBattleTriggeredTeams
+        : [false, false, false, false];
+      const triggeredCount = triggeredTeams.filter(Boolean).length;
+      const alreadyTriggered = !!triggeredTeams[teamIndex];
+
+      if (!alreadyTriggered && triggeredCount < 3) {
+        triggeredTeams[teamIndex] = true;
+        gameState.kmyakBattleTriggeredTeams = triggeredTeams;
+        // 旧フラグは互換用に「3チーム到着済み」のときだけtrueにする。
+        gameState.kmyakBattleTriggered = triggeredCount + 1 >= 3;
+        gameState.kmyakBattleTeamIndex = teamIndex;
+        syncGameState();
+        isMoving = false;
+        startKmyakBattleEvent(teamIndex);
+        return;
+      }
+      // 4番目のチームは15マス目でイベントを発生させず、そのままターン終了。
     }
 
     isMoving = false;
@@ -5573,8 +5863,15 @@
     const piece = document.getElementById(`piece-${teamIndex}`);
     if (!piece || tilePositions.length === 0) return;
 
+    // コマの位置は計算済み座標ではなく、実際に表示されているマスのDOM位置を基準にする。
+    // スマホの画面サイズ変更・縦横切替・初期表示のタイミングが変わっても、
+    // コマが必ず対応するマスの中心に重なるようにする。
     const targetTile = tilePositions[pos];
-    if (!targetTile) return;
+    const targetTileEl = document.getElementById(`tile-${pos}`);
+    if (!targetTile && !targetTileEl) return;
+
+    const baseX = targetTileEl ? targetTileEl.offsetLeft : targetTile.x;
+    const baseY = targetTileEl ? targetTileEl.offsetTop : targetTile.y;
 
     const sameTeamPieces = [];
     for (let i = 0; i < 4; i++) {
@@ -5596,8 +5893,8 @@
       offsetY = Math.sin(angle) * radius;
     }
 
-    piece.style.left = `${targetTile.x + offsetX}px`;
-    piece.style.top = `${targetTile.y + offsetY}px`;
+    piece.style.left = `${baseX + offsetX}px`;
+    piece.style.top = `${baseY + offsetY}px`;
   }
 
   function updateUI() {
@@ -5720,11 +6017,6 @@
   }
 
   window.rollDiceProxy = async function() {
-    if (isSpectator) {
-      alert('観覧モードでは代理で振れません。');
-      return;
-    }
-
     if (!gameState.gameStarted || gameState.isGameOver) {
       alert('ゲームが開始されていません。');
       return;

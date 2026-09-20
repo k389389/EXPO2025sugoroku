@@ -1217,6 +1217,26 @@
         }, index * 220);
       });
     },
+    finalTrial: function() {
+      const ctx = getAudioContext();
+      const notes = [220, 277.18, 329.63, 440, 554.37];
+      notes.forEach((freq, index) => {
+        setTimeout(() => {
+          if (ctx.state === 'closed') return;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = index < 3 ? 'sawtooth' : 'triangle';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime);
+          gain.gain.setValueAtTime(0.001, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.16, ctx.currentTime + 0.03);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.3);
+        }, index * 120);
+      });
+    },
     quizStart: function() {
       const ctx = getAudioContext();
       const notes = [392.00, 523.25, 659.25, 783.99];
@@ -2795,8 +2815,12 @@
             Number(c.team) >= 0 && Number(c.team) < 4
           ) {
             quizProcessedChatIds.add(chatId);
-            if (c.text.trim() === activeQuiz.answer) {
+            if (activeQuiz.finalGoal && Number(c.team) !== Number(activeQuiz.targetTeam)) {
+              // ゴール最終試練は、20マス目にぴったり止まったチームだけが回答できる。
+            } else if (c.text.trim() === activeQuiz.answer) {
               handleQuizCorrect(c.team, c.name);
+            } else if (activeQuiz.finalGoal) {
+              handleFinalGoalQuizWrong(c.team, c.name, `「${c.text}」`);
             } else {
               soundEffect.wrong();
               showWrongBanner(`${c.name}さんの回答「${c.text}」は不正解…！`);
@@ -4589,14 +4613,15 @@
     overlay.className = 'quiz-overlay';
     overlay.id = 'quiz-overlay';
 
-    quizTimeRemaining = 30;
+    quizTimeRemaining = Number(qData.timeLimit || 30);
+    const isFinalGoal = !!qData.finalGoal;
 
     overlay.innerHTML = `
-      <div class="quiz-title">会場でクイズ民と遭遇😃！クイズバトルだ！ (第${qData.questionNumber}/2問) 🧠</div>
+      <div class="quiz-title">${isFinalGoal ? '🔥 クイズ館長からの挑戦状🔥' : `会場でクイズ民と遭遇😃！クイズバトルだ！ (第${qData.questionNumber}/2問) 🧠`}</div>
       <div class="quiz-timer">残り時間: <span id="quiz-timer-sec">${quizTimeRemaining}</span>秒</div>
       <div class="quiz-emojis">${qData.emojis}</div>
       <div class="quiz-hint">ヒント: ${qData.hint}</div>
-      <div style="font-size:9px; color:#555;">チャット欄に「ひらがな」で早く正解したチームが2マス進む！</div>
+      <div style="font-size:9px; color:#555;">${isFinalGoal ? '挑戦できるのは20マス目にぴったり止まったチームだけ！' : 'チャット欄に「ひらがな」で早く正解したチームが2マス進む！'}</div>
     `;
     board.appendChild(overlay);
   }
@@ -4629,8 +4654,9 @@
   function startQuizTimer(startTime = Date.now()) {
     if (quizTimer) clearInterval(quizTimer);
 
+    const timeLimit = Number(activeQuiz?.timeLimit || 30);
     const elapsed = Math.floor((Date.now() - Number(startTime || Date.now())) / 1000);
-    quizTimeRemaining = Math.max(0, 30 - elapsed);
+    quizTimeRemaining = Math.max(0, timeLimit - elapsed);
 
     const secSpan = document.getElementById('quiz-timer-sec');
     if (secSpan) secSpan.innerText = quizTimeRemaining;
@@ -4653,7 +4679,144 @@
     }, 1000);
   }
 
+  async function startFinalGoalQuiz(teamIndex) {
+    if (isSpectator || gameState.isGameOver || gameState.activeQuiz || gameState.quizTurnLocked) return;
+
+    const chosenIdx = Math.floor(Math.random() * allQuizPool.length);
+    const q = allQuizPool[chosenIdx];
+    const roundId = Number(gameState.quizRoundId || 0) + 1;
+
+    gameState.quizTurnLocked = true;
+    gameState.quizCountdownActive = false;
+    gameState.quizRoundCountdownStarted = false;
+    gameState.quizRoundId = roundId;
+    gameState.activeQuiz = null;
+    syncGameState();
+    updateUI();
+
+    hideBoardMessage();
+    soundEffect.finalTrial();
+    showScreenMessage('<span style="font-size:26px; line-height:1.55; color:#ffeb3b;">🔥クイズ館長からの挑戦状🔥<br><span style="font-size:21px; color:#fff;">「家に帰るまでが万博やで‼️<br>わたしのクイズを解かんかい‼️」</span></span>', 2500);
+
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    if (gameState.isGameOver) return;
+
+    startQuizCountdown(() => startFinalGoalQuizRound(teamIndex, q, roundId));
+  }
+
+  function startFinalGoalQuizRound(teamIndex, q, roundId) {
+    if (gameState.isGameOver) return;
+    quizProcessedChatIds.clear();
+    quizAnswerLocked = false;
+
+    activeQuiz = {
+      emojis: q.emojis,
+      answer: q.answer,
+      hint: q.hint,
+      active: true,
+      questionNumber: 1,
+      startTime: Date.now(),
+      roundId,
+      usedIndices: [],
+      finalGoal: true,
+      targetTeam: Number(teamIndex),
+      timeLimit: 15
+    };
+
+    gameState.activeQuiz = activeQuiz;
+    gameState.quizTurnLocked = true;
+    syncGameState();
+    updateUI();
+    soundEffect.event();
+    pushLog(`🔥 ${teamNames[teamIndex]} に最後の試練！15秒以内にクイズに答えよう！`);
+    showQuizOverlay(activeQuiz);
+    startQuizTimer(activeQuiz.startTime);
+  }
+
+  async function handleFinalGoalQuizCorrect(teamIndex, playerName) {
+    if (!activeQuiz || !activeQuiz.active || !activeQuiz.finalGoal ||
+        Number(teamIndex) !== Number(activeQuiz.targetTeam) || quizAnswerLocked) return;
+
+    const roundId = Number(activeQuiz.roundId || activeQuiz.startTime || 0);
+    const { ref, runTransaction, db } = window.dbRef;
+    const claim = await runTransaction(ref(db, `gameState/quizAnswerClaims/${roundId}`), current => {
+      if (current) return;
+      return { type: 'finalGoalCorrect', teamIndex: Number(teamIndex), playerName, claimedAt: Date.now() };
+    }).catch(() => null);
+    if (!claim || !claim.committed) return;
+
+    quizAnswerLocked = true;
+    activeQuiz.active = false;
+    if (quizTimer) { clearInterval(quizTimer); quizTimer = null; }
+    gameState.activeQuiz = null;
+    gameState.quizTurnLocked = true;
+    syncGameState();
+    closeQuizOverlay(false);
+    hideBoardMessage();
+
+    soundEffect.goal();
+    pushLog(`🎉 ${teamNames[teamIndex]} が最後の試練に正解！ゴール！`);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    showSquareMessage(teamIndex, totalTiles - 1);
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    const winningMembers = Object.values(allUsers)
+      .filter(u => u.team === teamIndex)
+      .map(u => u.name)
+      .join('、');
+    showWinBanner(teamNames[teamIndex], winningMembers);
+    gameState.isGameOver = true;
+    gameState.quizTurnLocked = false;
+    syncGameState();
+    updateUI();
+    isMoving = false;
+    zoomOutAfterGameOver();
+  }
+
+  async function handleFinalGoalQuizWrong(teamIndex, playerName, answerText = '') {
+    if (!activeQuiz || !activeQuiz.active || !activeQuiz.finalGoal ||
+        Number(teamIndex) !== Number(activeQuiz.targetTeam) || quizAnswerLocked) return;
+
+    const roundId = Number(activeQuiz.roundId || activeQuiz.startTime || 0);
+    const { ref, runTransaction, db } = window.dbRef;
+    const claim = await runTransaction(ref(db, `gameState/quizAnswerClaims/${roundId}`), current => {
+      if (current) return;
+      return { type: 'finalGoalWrong', teamIndex: Number(teamIndex), playerName, claimedAt: Date.now() };
+    }).catch(() => null);
+    if (!claim || !claim.committed) return;
+
+    quizAnswerLocked = true;
+    activeQuiz.active = false;
+    if (quizTimer) { clearInterval(quizTimer); quizTimer = null; }
+    gameState.activeQuiz = null;
+    syncGameState();
+    closeQuizOverlay(false);
+
+    showWrongBanner(`${playerName}さんの回答${answerText}は不正解…！`);
+    pushLog(`❌ ${teamNames[teamIndex]} は最後の試練に不正解。3マス戻ります。`);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    const oldPos = Number(gameState.positions[teamIndex] || 0);
+    const backTarget = Math.max(0, oldPos - 3);
+    await movePieceStepByStep(teamIndex, oldPos, backTarget, true);
+    gameState.positions[teamIndex] = backTarget;
+    syncGameState();
+    updateBoardImage();
+    hideBoardMessage();
+    const wrongBanner = document.querySelector('.wrong-banner');
+    if (wrongBanner) wrongBanner.remove();
+
+    isMoving = false;
+    gameState.quizTurnLocked = false;
+    advanceTurn();
+    scheduleCameraForNextTeam(50);
+  }
+
   async function handleQuizCorrect(teamIndex, playerName) {
+    if (activeQuiz && activeQuiz.finalGoal) {
+      return handleFinalGoalQuizCorrect(teamIndex, playerName);
+    }
     if (!activeQuiz || !activeQuiz.active || quizAnswerLocked) return;
 
     const roundId = Number(activeQuiz.roundId || activeQuiz.startTime || 0);
@@ -4717,6 +4880,9 @@
   }
 
   async function endQuizRound(message) {
+    if (activeQuiz && activeQuiz.finalGoal) {
+      return handleFinalGoalQuizWrong(activeQuiz.targetTeam, '時間切れ', '');
+    }
     if (!activeQuiz || !activeQuiz.active) return;
 
     const roundId = Number(activeQuiz.roundId || activeQuiz.startTime || 0);
@@ -5324,10 +5490,10 @@
     return overlay;
   }
 
-  async function handleGoalContact(teamIndex, exactGoal) {
+  async function handleGoalContact(teamIndex, exactGoal, suppliedGoalEventRoll = null) {
     // ゴールに触れたら、5%で大混雑、次の5%でオールナイト万博。
-    // 1回のゴール接触につき一度だけ判定するので、2つは同時発生しない。
-    const goalEventRoll = Math.random();
+    // それらが起こらなかった「ぴったりゴール」だけ、最後のクイズを100%発生させる。
+    const goalEventRoll = suppliedGoalEventRoll == null ? Math.random() : suppliedGoalEventRoll;
 
     if (goalEventRoll < 0.05) {
       soundEffect.return();
@@ -5397,6 +5563,11 @@
       showSquareMessage(teamIndex, 13);
       await waitForSquareMessage(3000);
       return { type: 'allnight' };
+    }
+
+    if (exactGoal) {
+      await startFinalGoalQuiz(teamIndex);
+      return { type: 'finalGoalQuiz' };
     }
 
     return { type: 'normal' };
@@ -5512,14 +5683,17 @@
       syncGameState();
       updateBoardImage();
 
-      // ぴったりゴールなら20マス目のアナウンスを表示。
-      // オーバーした場合は20マス目のアナウンスを表示せず、そのまま折り返す。
-      if (rawTarget === goalIndex) {
+      // ぴったりゴールでも、大渋滞・オールナイト万博が起こらない場合は
+      // 20マス目の通常アナウンスを出さず、最後のクイズへ進む。
+      const exactGoal = rawTarget === goalIndex;
+      const goalEventRoll = Math.random();
+      const willFinalGoalQuiz = exactGoal && goalEventRoll >= 0.10;
+      if (exactGoal && !willFinalGoalQuiz) {
         showSquareMessage(teamIndex, goalIndex);
         await waitForSquareMessage(3000);
       }
 
-      const goalEvent = await handleGoalContact(teamIndex, rawTarget === goalIndex);
+      const goalEvent = await handleGoalContact(teamIndex, exactGoal, goalEventRoll);
 
       if (goalEvent.type === 'allnight' || goalEvent.type === 'jam') {
         isMoving = false;
@@ -5530,6 +5704,9 @@
           return;
         }
         targetPos = gameState.positions[teamIndex];
+      } else if (goalEvent.type === 'finalGoalQuiz') {
+        isMoving = false;
+        return;
       } else if (rawTarget > goalIndex) {
         // オーバーした場合は超過分だけ戻る。
         const bounceTarget = Math.max(0, goalIndex - (rawTarget - goalIndex));

@@ -1645,7 +1645,22 @@
     { emojis: "🌍 🪐 🚀 💥", answer: "あるまげどん", hint: "あ◯◯◯◯ん" },
     { emojis: "🇦🇺 🍰 🍫 🌴", answer: "らみんとん", hint: "ら◯◯◯ん" },
     { emojis: "🏴 💀 🦴 🦴", answer: "かいぞくき", hint: "か〇〇〇き" },
-    { emojis: "🥛 🍧 🥭", answer: "みるしゃりまんごー", hint: "み〇〇〇〇〇〇〇ー" }
+    { emojis: "🥛 🍧 🥭", answer: "みるしゃりまんごー", hint: "み〇〇〇〇〇〇〇ー" },
+    { emojis: "👤🫱🍱", answer: "わんはんどべんとう", hint: "わ◯◯◯◯◯◯◯う" },
+    { emojis: "⭐️⚾️🚀", answer: "あめりかかん", hint: "あ◯◯◯◯ん" },
+    { emojis: "🟡🏫🗣️🎦", answer: "いのちのあかし", hint: "い◯◯◯◯◯し" },
+    { emojis: "💧🔴👀👀👀🏠", answer: "みゃくみゃくはうす", hint: "み◯◯◯◯◯◯◯す" },
+    { emojis: "⚫️💧🔴👀👀👀", answer: "くろみゃくみゃく", hint: "く◯◯◯◯◯◯く" },
+    { emojis: "💧🔴👀👀👀🚁⛰️", answer: "ちはやあかさかむら", hint: "ち◯◯◯◯◯◯◯ら" },
+    { emojis: "🇨🇳🇰🇼🇧🇷🇦🇹🛣️", answer: "じごくどおり", hint: "じ◯◯◯◯り" },
+    { emojis: "🐟🧅🍞🇳🇱", answer: "ぶろーちぇはーりんぐ", hint: "ぶ◯◯◯◯◯◯◯◯ぐ" },
+    { emojis: "🟡🟢👀👀🍸", answer: "れねかくてる", hint: "レ◯◯◯◯る" },
+    { emojis: "🏇🤖", answer: "こるれお", hint: "こ◯◯◯お" },
+    { emojis: "🍲🥩🧅🥕🥔🫑🇭🇺", answer: "ぐやーしゅ", hint: "ぐ◯◯◯ゅ" },
+    { emojis: "🌳🎭💧🎨🚶", answer: "しずけさのもり", hint: "し◯◯◯◯◯り" },
+    { emojis: "🤖🐙🍜🥟🍣🍛", answer: "おおさかのれんめぐり", hint: "お◯◯◯◯◯◯◯◯り" },
+    { emojis: "🚶☝️🍚🥢", answer: "いっしょくにゅうこん", hint: "い◯◯◯◯◯◯◯ん" },
+    { emojis: "🥚🥧🇵🇹", answer: "えっぐたると", hint: "え◯◯◯◯と" }
   ];
 
   const tileEvents = [
@@ -5397,7 +5412,7 @@
     const isRecoveryRoll = !!options.recovery;
     const isCpuRoll = !!options.cpu;
 
-    if (isSpectator || !gameState.gameStarted || (isMoving && !isRecoveryRoll) || gameState.isGameOver ||
+    if (!gameState.gameStarted || (isMoving && !isRecoveryRoll) || gameState.isGameOver ||
         gameState.activeQuiz || gameState.quizTurnLocked || gameState.quizCountdownActive ||
         gameState.quizRoundCountdownStarted || gameState.activeLottery || gameState.activeKmyakBattle ||
         gameState.activeMyakuNyokki || gameState.activeMushroomTime || gameState.mushroomTimeTurnLocked) return;
@@ -5413,8 +5428,6 @@
     const expectedPlayers = getRealTeamPlayers(expectedTeam);
 
     if (!isProxyRoll && !isCpuRoll && !isMyTurn()) return;
-    if (isRecoveryRoll && isSpectator) return;
-
     const { ref, runTransaction, db } = window.dbRef;
     const lockClaim = await runTransaction(ref(db, 'gameState'), current => {
       if (!current || !current.gameStarted || current.isGameOver) return;
@@ -6019,11 +6032,6 @@
   }
 
   window.rollDiceProxy = async function() {
-    if (isSpectator) {
-      alert('観覧モードでは代理で振れません。');
-      return;
-    }
-
     if (!gameState.gameStarted || gameState.isGameOver) {
       alert('ゲームが開始されていません。');
       return;

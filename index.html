@@ -1966,6 +1966,9 @@
     const el = document.createElement('div');
     el.className = 'mushroom-burst-float';
     el.textContent = '🍄';
+    el.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
     el.style.left = `${12 + Math.random() * 76}%`;
     el.style.setProperty('--drift-x', `${-45 + Math.random() * 90}px`);
     el.style.setProperty('--rotate', `${-20 + Math.random() * 40}deg`);

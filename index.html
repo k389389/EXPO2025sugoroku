@@ -609,7 +609,7 @@
     .mushroom-time-title { font-size:24px; font-weight:900; color:#ffeb3b; margin-bottom:5px; }
     .mushroom-time-desc { font-size:12px; line-height:1.45; margin-bottom:4px; }
     .mushroom-time-countdown { font-size:36px; font-weight:900; color:#ff9800; line-height:1.05; }
-    .mushroom-time-btn { width:58%; padding:10px; border:3px solid #fff; border-radius:50px; background:linear-gradient(135deg,#ff9800,#e65100); color:#fff; font-size:38px; font-weight:900; cursor:pointer; box-shadow:0 6px 18px rgba(255,152,0,.45); margin:5px 0; touch-action:manipulation; }
+    .mushroom-time-btn { width:58%; padding:10px; border:3px solid #fff; border-radius:50px; background:linear-gradient(135deg,#ff9800,#e65100); color:#fff; font-size:38px; font-weight:900; cursor:pointer; box-shadow:0 6px 18px rgba(255,152,0,.45); margin:5px 0; touch-action:manipulation; pointer-events:none; cursor:default; }
     .mushroom-time-btn:active { transform:scale(.94); }
     .mushroom-time-btn:disabled { background:#777; box-shadow:none; cursor:not-allowed; }
     .mushroom-time-stats { font-size:10px; line-height:1.35; background:rgba(255,255,255,.1); padding:5px; border-radius:8px; }
@@ -3100,12 +3100,13 @@
 
     myUserName = name;
     isSpectator = false;
+    localStorage.removeItem("expo_spectator");
 
-    // 観覧モードへ切り替える前のチームが保存されていれば、そのチームへ戻る。
-    const savedTeam = parseInt(localStorage.getItem("expo_spectator_team") ?? "-1", 10);
-    if (Number.isInteger(savedTeam) && savedTeam >= 0 && savedTeam < 4) {
-      myTeamIndex = savedTeam;
-      localStorage.removeItem("expo_spectator_team");
+    // 観覧モードへ切り替える前に所属していたチームが保存されていれば、
+    // そのチームへ戻る。保存がない通常参加時だけ従来どおりチームを決める。
+    const returnTeam = parseInt(localStorage.getItem("expo_team_before_spectator") ?? "-1");
+    if (returnTeam >= 0 && returnTeam < 4) {
+      myTeamIndex = returnTeam;
     } else {
       let counts = [0, 0, 0, 0];
       Object.values(allUsers).forEach(u => {
@@ -3119,9 +3120,9 @@
       myTeamIndex = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
     }
 
-    localStorage.removeItem("expo_spectator");
     localStorage.setItem("expo_username", myUserName);
     localStorage.setItem("expo_team", myTeamIndex);
+    localStorage.removeItem("expo_team_before_spectator");
 
     document.getElementById('login-modal').style.display = 'none';
 
@@ -3148,18 +3149,11 @@
     myUserName = name;
     isSpectator = true;
 
-    // プレイヤーだった場合は、観覧モードにする直前のチームを保存する。
-    const encoded = encodeURIComponent(myUserName);
-    const previousUser = allUsers[encoded];
-    const previousTeam = previousUser && Number.isInteger(previousUser.team)
-      ? previousUser.team
-      : myTeamIndex;
-    if (Number.isInteger(previousTeam) && previousTeam >= 0 && previousTeam < 4) {
-      localStorage.setItem("expo_spectator_team", previousTeam);
-    } else {
-      localStorage.removeItem("expo_spectator_team");
+    // 観覧モードにする直前のチームを保存しておき、
+    // 後でプレイヤーに戻ったときに同じチームへ復帰できるようにする。
+    if (myTeamIndex >= 0 && myTeamIndex < 4) {
+      localStorage.setItem("expo_team_before_spectator", myTeamIndex);
     }
-
     localStorage.setItem("expo_username", myUserName);
     localStorage.setItem("expo_spectator", "1");
     localStorage.removeItem("expo_team");
@@ -3172,6 +3166,7 @@
     // 参加者→観覧への切り替え時に、参加者レコードが残らないようにする。
     if (window.dbRef) {
       const { ref, update, db } = window.dbRef;
+      const encoded = encodeURIComponent(myUserName);
       update(ref(db), {
         [`users/${encoded}`]: null,
         [`spectators/${encoded}`]: {
@@ -3180,16 +3175,9 @@
           role: 'spectator'
         }
       }).then(() => {
-        // チーム一覧から即時に消し、観覧者一覧へ反映する。
-        delete allUsers[encoded];
-        rebuildTeamPlayers();
-        updateUI();
         registerSpectatorToFirebase();
       }).catch(err => {
         console.warn('観覧モードへの切り替えに失敗しました。', err);
-        delete allUsers[encoded];
-        rebuildTeamPlayers();
-        updateUI();
         registerSpectatorToFirebase();
       });
     } else {
@@ -3225,8 +3213,8 @@
 
     localStorage.removeItem("expo_username");
     localStorage.removeItem("expo_team");
+    localStorage.removeItem("expo_team_before_spectator");
     localStorage.removeItem("expo_spectator");
-    localStorage.removeItem("expo_spectator_team");
     myUserName = "";
     isSpectator = false;
     myTeamIndex = -1;
@@ -3263,16 +3251,23 @@
       if (snapshot.exists() && snapshot.val().team !== undefined) {
         myTeamIndex = snapshot.val().team;
       } else {
-        let counts = [0, 0, 0, 0];
-        Object.values(allUsers).forEach(u => {
-          if (u.team >= 0 && u.team < 4) counts[u.team]++;
-        });
-        let minVal = Math.min(...counts);
-        let candidateTeams = [];
-        counts.forEach((cnt, idx) => {
-          if (cnt === minVal) candidateTeams.push(idx);
-        });
-        myTeamIndex = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
+        // 既存のチーム情報がない場合でも、保存済みの所属チームがあればそれを優先。
+        // それもない新規参加時だけ従来どおり人数の少ないチームから決める。
+        const savedTeam = parseInt(localStorage.getItem("expo_team") ?? "-1");
+        if (savedTeam >= 0 && savedTeam < 4) {
+          myTeamIndex = savedTeam;
+        } else {
+          let counts = [0, 0, 0, 0];
+          Object.values(allUsers).forEach(u => {
+            if (u.team >= 0 && u.team < 4) counts[u.team]++;
+          });
+          let minVal = Math.min(...counts);
+          let candidateTeams = [];
+          counts.forEach((cnt, idx) => {
+            if (cnt === minVal) candidateTeams.push(idx);
+          });
+          myTeamIndex = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
+        }
       }
 
       localStorage.setItem("expo_team", myTeamIndex);
@@ -4832,7 +4827,7 @@
 
     hideBoardMessage();
     soundEffect.finalTrial();
-    showScreenMessage('<span style="font-size:28px !important; line-height:1.45; color:#ffeb3b; font-weight:900;">🔥クイズ館長からの挑戦状🔥<br><span style="font-size:20px !important; color:#fff;">「家に帰るまでが万博やで‼️<br>わたしのクイズを解かんかい‼️」</span></span>', 2500);
+    showScreenMessage('<span style="font-size:28px !important; line-height:1.25; color:#ffeb3b; font-weight:900; white-space:nowrap;">🔥クイズ館長から挑戦状🔥<br><span style="font-size:28px !important; color:#fff; white-space:nowrap;">「万博の締めはな<br>そらクイズやろ‼️」</span></span>', 2500);
 
     await new Promise(resolve => setTimeout(resolve, 2500));
     if (gameState.isGameOver) return;

@@ -4734,7 +4734,7 @@
     const isFinalGoal = !!qData.finalGoal;
 
     overlay.innerHTML = `
-      <div class="quiz-title">${isFinalGoal ? '<span style="font-size:28px; line-height:1.2; display:block;">🔥 クイズ館長からの挑戦状🔥</span>' : `会場でクイズ民と遭遇😃！クイズバトルだ！ (第${qData.questionNumber}/2問) 🧠`}</div>
+      <div class="quiz-title">${isFinalGoal ? '<span style="font-size:32px; line-height:1.2; display:block;">🔥 クイズ館長からの挑戦状🔥</span>' : `会場でクイズ民と遭遇😃！クイズバトルだ！ (第${qData.questionNumber}/2問) 🧠`}</div>
       <div class="quiz-timer">残り時間: <span id="quiz-timer-sec">${quizTimeRemaining}</span>秒</div>
       <div class="quiz-emojis">${qData.emojis}</div>
       <div class="quiz-hint">ヒント: ${qData.hint}</div>
@@ -4813,7 +4813,7 @@
 
     hideBoardMessage();
     soundEffect.finalTrial();
-    showScreenMessage('<span style="font-size:28px !important; line-height:1.45; color:#ffeb3b; font-weight:900;">🔥クイズ館長からの挑戦状🔥<br><span style="font-size:20px !important; color:#fff;">「家に帰るまでが万博やで‼️<br>わたしのクイズを解かんかい‼️」</span></span>', 2500);
+    showScreenMessage('<span style="font-size:32px !important; line-height:1.45; color:#ffeb3b; font-weight:900;">🔥クイズ館長からの挑戦状🔥<br><span style="font-size:24px !important; color:#fff;">「家に帰るまでが万博やで‼️<br>わたしのクイズを解かんかい‼️」</span></span>', 2500);
 
     await new Promise(resolve => setTimeout(resolve, 2500));
     if (gameState.isGameOver) return;

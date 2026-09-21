@@ -1766,6 +1766,8 @@
   let cpuQuizTimers = [];
   let cpuKmyakTapTimers = [];
   let cpuKmyakSpawnTimers = [];
+  let kmyakResultRecoveryTimer = null;
+  let kmyakResultRecoveryEventId = null;
 
   let lotteryTimer = null;
   let lotteryTimeRemaining = 10;
@@ -2682,6 +2684,7 @@
 
         if (gameState.activeKmyakBattle) {
           renderKmyakBattleOverlay();
+          if (gameState.kmyakBattlePhase === "result") scheduleKmyakResultRecovery();
         } else {
           removeKmyakBattleOverlay();
         }
@@ -4407,6 +4410,97 @@
     }, 4500);
   }
 
+  async function recoverStuckKmyakBattle(eventId = null) {
+    if (!window.dbRef) return false;
+    const { ref, runTransaction, db } = window.dbRef;
+    const targetEventId = String(eventId || gameState.kmyakBattleEventId || '');
+    if (!targetEventId) return false;
+
+    const tx = await runTransaction(ref(db, 'gameState'), current => {
+      if (!current) return;
+      if (String(current.kmyakBattleEventId || '') !== targetEventId) return;
+      if (!current.activeKmyakBattle || current.kmyakBattlePhase !== 'result') return;
+
+      const eventTeamIndex = Number(current.kmyakBattleResultOwner ?? current.kmyakBattleTeamIndex);
+      const rank = Number(current.kmyakBattleResultRank);
+      if (!Number.isInteger(eventTeamIndex) || eventTeamIndex < 0 || eventTeamIndex > 3) return;
+      if (![1, 2, 3, 4].includes(rank)) return;
+
+      const currentTeam = Number(current.currentTeamIndex);
+      const playerIndices = Array.isArray(current.playerIndices) ? [...current.playerIndices] : [0,0,0,0];
+      const players = getRealTeamPlayers(currentTeam);
+      if (players.length > 0) {
+        playerIndices[currentTeam] = (Number(playerIndices[currentTeam] || 0) + 1) % players.length;
+      } else {
+        playerIndices[currentTeam] = 0;
+      }
+
+      const positions = Array.isArray(current.positions) ? [...current.positions] : [0,0,0,0];
+      const goalIndex = totalTiles - 1;
+      if (rank === 1) {
+        positions[eventTeamIndex] = Math.min(goalIndex, Number(positions[eventTeamIndex] || 0) + 2);
+      }
+
+      const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];
+      if (rank === 4) skipTurns[eventTeamIndex] = true;
+
+      return {
+        ...current,
+        positions,
+        skipTurns,
+        playerIndices,
+        currentTeamIndex: (currentTeam + 1) % 4,
+        turnActionLocked: false,
+        turnActionLockedAt: 0,
+        activeKmyakBattle: false,
+        kmyakBattlePhase: 'idle',
+        kmyakBattleTeamIndex: null,
+        kmyakBattleResultRank: null,
+        kmyakBattleResultOwner: null,
+        kmyakBattleResolved: false
+      };
+    }).catch(() => null);
+
+    if (!tx || !tx.committed) return false;
+
+    const before = gameState;
+    const after = tx.snapshot.val() || gameState;
+    const eventTeamIndex = Number(before.kmyakBattleResultOwner ?? before.kmyakBattleTeamIndex);
+    const rank = Number(before.kmyakBattleResultRank);
+    const oldPos = Number(before.positions?.[eventTeamIndex] || 0);
+    const newPos = Number(after.positions?.[eventTeamIndex] || oldPos);
+    if (rank === 1 && newPos > oldPos) {
+      publishSharedMoveEvent(eventTeamIndex, oldPos, newPos, false);
+    }
+
+    gameState = after;
+    if (kmyakResultRecoveryTimer) {
+      clearTimeout(kmyakResultRecoveryTimer);
+      kmyakResultRecoveryTimer = null;
+    }
+    kmyakResultRecoveryEventId = null;
+    removeKmyakBattleOverlay();
+    updateBoardImage();
+    updateUI();
+    isMoving = false;
+    scheduleCameraForNextTeam(50);
+    return true;
+  }
+
+  function scheduleKmyakResultRecovery() {
+    const eventId = String(gameState.kmyakBattleEventId || '');
+    if (!eventId || gameState.kmyakBattlePhase !== 'result') return;
+    if (kmyakResultRecoveryEventId === eventId && kmyakResultRecoveryTimer) return;
+
+    if (kmyakResultRecoveryTimer) clearTimeout(kmyakResultRecoveryTimer);
+    kmyakResultRecoveryEventId = eventId;
+    // 通常の結果処理を優先し、それでも残っている場合だけ救済する。
+    kmyakResultRecoveryTimer = setTimeout(() => {
+      kmyakResultRecoveryTimer = null;
+      recoverStuckKmyakBattle(eventId);
+    }, 6000);
+  }
+
   function renderKmyakBattleOverlay() {
     const board = document.getElementById('board');
     let overlay = board.querySelector('.kmyak-battle-overlay');
@@ -4530,6 +4624,7 @@
 
 
   async function startNextQuizRound(skipCountdown = false) {
+    const { ref, update, db } = window.dbRef;
     const sharedUsed = Array.isArray(gameState.quizUsedIndices)
       ? [...gameState.quizUsedIndices]
       : [...usedQuizIndices];
@@ -4541,8 +4636,15 @@
       gameState.quizCountdownActive = false;
       gameState.quizRoundCountdownStarted = false;
       gameState.quizUsedIndices = sharedUsed;
-      syncGameState();
-      closeQuizOverlay();
+      // クイズ終了時もgameState全体をset()せず、クイズ関連項目だけ更新する。
+      await update(ref(db, 'gameState'), {
+        activeQuiz: null,
+        quizTurnLocked: false,
+        quizCountdownActive: false,
+        quizRoundCountdownStarted: false,
+        quizUsedIndices: sharedUsed
+      });
+      closeQuizOverlay(false);
       pushLog("🧠 クイズバトルが終了しました！すごろくを再開します。");
       updateUI();
       isMoving = false;
@@ -4881,8 +4983,11 @@
       quizTimer = null;
     }
 
+    // クイズ終了時はgameState全体をset()しない。
+    // 複数端末の古いpositionsを丸ごと上書きすると、正解後の追加移動が
+    // 2マス進んだ直後に元の位置へ戻ることがあるため、必要な項目だけ更新する。
     gameState.activeQuiz = null;
-    syncGameState();
+    await update(ref(db, 'gameState'), { activeQuiz: null, quizTurnLocked: true });
 
     soundEffect.goal();
 
@@ -4899,16 +5004,18 @@
       // クイズの追加移動は、古いgameState全体をset()してしまうと、
       // 別端末の古いpositionsで正解チームの位置が元に戻ることがある。
       // 最新のFirebase状態に対して「このチームの位置だけ」を確定する。
+      // 位置の確定はpositions/{teamIndex}だけをトランザクション更新する。
+      // 他端末の古いgameState全体同期に位置を戻されないようにする。
       const positionRef = ref(db, `gameState/positions/${teamIndex}`);
       const positionClaim = await runTransaction(positionRef, current => {
         return forwardTarget;
       }).catch(() => null);
 
       // Firebaseで確定した位置をローカル状態にも反映。
-      gameState.positions[teamIndex] = forwardTarget;
-      if (positionClaim && positionClaim.committed) {
-        gameState.positions[teamIndex] = Number(positionClaim.snapshot.val());
-      }
+      const committedPosition = positionClaim && positionClaim.committed
+        ? Number(positionClaim.snapshot.val())
+        : forwardTarget;
+      gameState.positions[teamIndex] = committedPosition;
       updateBoardImage();
       updateUI();
 
@@ -6182,18 +6289,20 @@
 
     const proxyRollBtn = document.getElementById('proxy-roll-btn');
     if (proxyRollBtn) {
+      const kmyakResultRecoveryAvailable = gameState.activeKmyakBattle && gameState.kmyakBattlePhase === "result";
       if (gameState.gameStarted && !gameState.isGameOver && !activeQuiz && !gameState.activeQuiz &&
           !gameState.quizTurnLocked && !gameState.quizCountdownActive && !gameState.quizRoundCountdownStarted &&
-          !gameState.activeLottery && !gameState.activeKmyakBattle && !gameState.activeMyakuNyokki &&
+          !gameState.activeLottery && (!gameState.activeKmyakBattle || kmyakResultRecoveryAvailable) && !gameState.activeMyakuNyokki &&
           !gameState.activeMushroomTime && !gameState.mushroomTimeTurnLocked) {
         proxyRollBtn.disabled = false;
         proxyRollBtn.innerText = "🤖 代理で振る";
       } else {
         // イベント中だけ無効。turnActionLockedだけでは無効にしない。
+        const kmyakResultRecoveryAvailable = gameState.activeKmyakBattle && gameState.kmyakBattlePhase === "result";
         const eventBlocked = !gameState.gameStarted || gameState.isGameOver || activeQuiz ||
           gameState.activeQuiz || gameState.quizTurnLocked || gameState.quizCountdownActive ||
           gameState.quizRoundCountdownStarted || gameState.activeLottery ||
-          gameState.activeKmyakBattle || gameState.activeMyakuNyokki ||
+          (gameState.activeKmyakBattle && !kmyakResultRecoveryAvailable) || gameState.activeMyakuNyokki ||
           gameState.activeMushroomTime || gameState.mushroomTimeTurnLocked;
         proxyRollBtn.disabled = eventBlocked;
       }
@@ -6254,6 +6363,19 @@
   window.rollDiceProxy = async function() {
     if (!gameState.gameStarted || gameState.isGameOver) {
       alert('ゲームが開始されていません。');
+      return;
+    }
+
+    // 15マス目の結果画面が端末間の競合などで残った場合は、
+    // 「代理で振る」で結果表示を閉じ、次のターンへ復旧してからサイコロを振る。
+    if (gameState.activeKmyakBattle && gameState.kmyakBattlePhase === 'result') {
+      if (!confirm('15マス目のイベント結果画面が残っています。結果を確定して、次のターンを代理で進めますか？')) return;
+      const recovered = await recoverStuckKmyakBattle(gameState.kmyakBattleEventId);
+      if (!recovered) {
+        alert('復旧できませんでした。少し待ってからもう一度「代理で振る」を押してください。');
+        return;
+      }
+      await executeDiceRoll({ proxy: true, recovery: true });
       return;
     }
 

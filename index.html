@@ -3102,19 +3102,9 @@
     isSpectator = false;
     localStorage.removeItem("expo_spectator");
     
-    let counts = [0, 0, 0, 0];
-    Object.values(allUsers).forEach(u => {
-      if (u.team >= 0 && u.team < 4) counts[u.team]++;
-    });
-    let minVal = Math.min(...counts);
-    let candidateTeams = [];
-    counts.forEach((cnt, idx) => {
-      if (cnt === minVal) candidateTeams.push(idx);
-    });
-    myTeamIndex = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
-
+    // チーム決定は registerUserToFirebase() に一本化する。
+    // ここではチームを決めないため、リロード・再入室時に再抽選されない。
     localStorage.setItem("expo_username", myUserName);
-    localStorage.setItem("expo_team", myTeamIndex);
 
     document.getElementById('login-modal').style.display = 'none';
 
@@ -3190,7 +3180,8 @@
       try {
         await update(ref(db), {
           [`users/${leavingEncoded}`]: null,
-          [`spectators/${leavingEncoded}`]: null
+          [`spectators/${leavingEncoded}`]: null,
+          [`teamAssignments/${leavingEncoded}`]: null
         });
       } catch (err) {
         console.warn('退出処理に失敗しました。', err);
@@ -3224,32 +3215,40 @@
 
   function registerUserToFirebase() {
     if (!myUserName || isSpectator) return;
-    const { ref, set, get, onDisconnect, db } = window.dbRef;
-    const userRef = ref(db, `users/${encodeURIComponent(myUserName)}`);
+    const { ref, set, get, runTransaction, onDisconnect, db } = window.dbRef;
+    const encodedName = encodeURIComponent(myUserName);
+    const userRef = ref(db, `users/${encodedName}`);
+    const teamRef = ref(db, `teamAssignments/${encodedName}`);
 
     // 明示的に「退出」を押さずに閉じた場合も参加者一覧から自動削除する。
+    // チーム情報は users とは別に保存するため、ここで削除されない。
     onDisconnect(userRef).remove();
 
-    get(userRef).then((snapshot) => {
-      if (!myUserName || isSpectator) return;
+    // チーム決定ルートはここだけ。
+    // teamAssignments に既存のチームがあれば必ずそれを使用し、
+    // リロード・再接続では絶対に再抽選しない。
+    runTransaction(teamRef, (current) => {
+      if (current && current.team >= 0 && current.team < 4) return current;
 
-      if (snapshot.exists() && snapshot.val().team !== undefined) {
-        myTeamIndex = snapshot.val().team;
-      } else {
-        let counts = [0, 0, 0, 0];
-        Object.values(allUsers).forEach(u => {
-          if (u.team >= 0 && u.team < 4) counts[u.team]++;
-        });
-        let minVal = Math.min(...counts);
-        let candidateTeams = [];
-        counts.forEach((cnt, idx) => {
-          if (cnt === minVal) candidateTeams.push(idx);
-        });
-        myTeamIndex = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
-      }
+      let counts = [0, 0, 0, 0];
+      Object.values(allUsers).forEach(u => {
+        if (u.team >= 0 && u.team < 4) counts[u.team]++;
+      });
+      let minVal = Math.min(...counts);
+      let candidateTeams = [];
+      counts.forEach((cnt, idx) => {
+        if (cnt === minVal) candidateTeams.push(idx);
+      });
+      const assignedTeam = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
+      return { team: assignedTeam };
+    }).then((result) => {
+      if (!myUserName || isSpectator || !result.committed) return;
 
+      const assignedTeam = result.snapshot.val().team;
+      myTeamIndex = assignedTeam;
       localStorage.setItem("expo_team", myTeamIndex);
-      set(userRef, {
+
+      return set(userRef, {
         name: myUserName,
         team: myTeamIndex,
         lastActive: Date.now(),
@@ -3271,6 +3270,7 @@
     userEntries.forEach((encodedName, index) => {
       const assignedTeam = index % 4;
       updates[`users/${encodedName}/team`] = assignedTeam;
+      updates[`teamAssignments/${encodedName}/team`] = assignedTeam;
     });
 
     update(ref(db), updates).then(() => {
@@ -4805,7 +4805,7 @@
 
     hideBoardMessage();
     soundEffect.finalTrial();
-    showScreenMessage('<span style="font-size:clamp(20px, 6vw, 28px); line-height:1.25; color:#ffeb3b; font-weight:900; white-space:nowrap;">🔥クイズ館長から挑戦状🔥<br><span style="font-size:clamp(20px, 6vw, 28px); color:#fff; white-space:nowrap;">「万博の締めはな<br>そらクイズやろ‼️」</span></span>', 2500);
+    showScreenMessage('<span style="font-size:28px !important; line-height:1.25; color:#ffeb3b; font-weight:900; white-space:nowrap;">🔥クイズ館長から挑戦状🔥<br><span style="font-size:28px !important; color:#fff; white-space:nowrap;">「万博の締めはな<br>そらクイズやろ‼️」</span></span>', 2500);
 
     await new Promise(resolve => setTimeout(resolve, 2500));
     if (gameState.isGameOver) return;

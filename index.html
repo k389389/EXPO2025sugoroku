@@ -4624,7 +4624,6 @@
 
 
   async function startNextQuizRound(skipCountdown = false) {
-    const { ref, update, db } = window.dbRef;
     const sharedUsed = Array.isArray(gameState.quizUsedIndices)
       ? [...gameState.quizUsedIndices]
       : [...usedQuizIndices];
@@ -4636,15 +4635,8 @@
       gameState.quizCountdownActive = false;
       gameState.quizRoundCountdownStarted = false;
       gameState.quizUsedIndices = sharedUsed;
-      // クイズ終了時もgameState全体をset()せず、クイズ関連項目だけ更新する。
-      await update(ref(db, 'gameState'), {
-        activeQuiz: null,
-        quizTurnLocked: false,
-        quizCountdownActive: false,
-        quizRoundCountdownStarted: false,
-        quizUsedIndices: sharedUsed
-      });
-      closeQuizOverlay(false);
+      syncGameState();
+      closeQuizOverlay();
       pushLog("🧠 クイズバトルが終了しました！すごろくを再開します。");
       updateUI();
       isMoving = false;
@@ -4983,11 +4975,8 @@
       quizTimer = null;
     }
 
-    // クイズ終了時はgameState全体をset()しない。
-    // 複数端末の古いpositionsを丸ごと上書きすると、正解後の追加移動が
-    // 2マス進んだ直後に元の位置へ戻ることがあるため、必要な項目だけ更新する。
     gameState.activeQuiz = null;
-    await update(ref(db, 'gameState'), { activeQuiz: null, quizTurnLocked: true });
+    syncGameState();
 
     soundEffect.goal();
 
@@ -5004,18 +4993,16 @@
       // クイズの追加移動は、古いgameState全体をset()してしまうと、
       // 別端末の古いpositionsで正解チームの位置が元に戻ることがある。
       // 最新のFirebase状態に対して「このチームの位置だけ」を確定する。
-      // 位置の確定はpositions/{teamIndex}だけをトランザクション更新する。
-      // 他端末の古いgameState全体同期に位置を戻されないようにする。
       const positionRef = ref(db, `gameState/positions/${teamIndex}`);
       const positionClaim = await runTransaction(positionRef, current => {
         return forwardTarget;
       }).catch(() => null);
 
       // Firebaseで確定した位置をローカル状態にも反映。
-      const committedPosition = positionClaim && positionClaim.committed
-        ? Number(positionClaim.snapshot.val())
-        : forwardTarget;
-      gameState.positions[teamIndex] = committedPosition;
+      gameState.positions[teamIndex] = forwardTarget;
+      if (positionClaim && positionClaim.committed) {
+        gameState.positions[teamIndex] = Number(positionClaim.snapshot.val());
+      }
       updateBoardImage();
       updateUI();
 

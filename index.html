@@ -3102,16 +3102,23 @@
     isSpectator = false;
     localStorage.removeItem("expo_spectator");
     
-    let counts = [0, 0, 0, 0];
-    Object.values(allUsers).forEach(u => {
-      if (u.team >= 0 && u.team < 4) counts[u.team]++;
-    });
-    let minVal = Math.min(...counts);
-    let candidateTeams = [];
-    counts.forEach((cnt, idx) => {
-      if (cnt === minVal) candidateTeams.push(idx);
-    });
-    myTeamIndex = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
+    // すでに同じ端末・同じ名前で参加済みなら、リロードや再入室で
+    // チームを再抽選しない。明示的なシャッフル時だけFirebase側のチーム変更を反映する。
+    const savedTeam = parseInt(localStorage.getItem("expo_team") ?? "-1", 10);
+    if (savedTeam >= 0 && savedTeam < 4) {
+      myTeamIndex = savedTeam;
+    } else {
+      let counts = [0, 0, 0, 0];
+      Object.values(allUsers).forEach(u => {
+        if (u.team >= 0 && u.team < 4) counts[u.team]++;
+      });
+      let minVal = Math.min(...counts);
+      let candidateTeams = [];
+      counts.forEach((cnt, idx) => {
+        if (cnt === minVal) candidateTeams.push(idx);
+      });
+      myTeamIndex = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
+    }
 
     localStorage.setItem("expo_username", myUserName);
     localStorage.setItem("expo_team", myTeamIndex);
@@ -3236,10 +3243,8 @@
       if (snapshot.exists() && snapshot.val().team !== undefined) {
         myTeamIndex = snapshot.val().team;
       } else {
-        // リロード・一時的な通信切断では onDisconnect により users から
-        // 自分のデータが一瞬消えることがある。
-        // その際に再抽選するとチームが変わってしまうため、
-        // 直前のチームを localStorage から復元する。
+        // onDisconnectで一時的にFirebaseのusersから自分が消えても、
+        // リロード・再接続のたびにチームを再抽選しない。
         const savedTeam = parseInt(localStorage.getItem("expo_team") ?? "-1", 10);
         if (savedTeam >= 0 && savedTeam < 4) {
           myTeamIndex = savedTeam;

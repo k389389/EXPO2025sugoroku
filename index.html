@@ -2743,7 +2743,6 @@
       if (myUserName && allUsers[encodeURIComponent(myUserName)]) {
         myTeamIndex = allUsers[encodeURIComponent(myUserName)].team;
         localStorage.setItem("expo_team", myTeamIndex);
-        localStorage.setItem("expo_reconnect_team", myTeamIndex);
       }
 
       rebuildTeamPlayers();
@@ -3123,7 +3122,6 @@
 
     localStorage.setItem("expo_username", myUserName);
     localStorage.setItem("expo_team", myTeamIndex);
-    localStorage.setItem("expo_reconnect_team", myTeamIndex);
     localStorage.removeItem("expo_team_before_spectator");
 
     document.getElementById('login-modal').style.display = 'none';
@@ -3155,7 +3153,6 @@
     // 後でプレイヤーに戻ったときに同じチームへ復帰できるようにする。
     if (myTeamIndex >= 0 && myTeamIndex < 4) {
       localStorage.setItem("expo_team_before_spectator", myTeamIndex);
-      localStorage.setItem("expo_reconnect_team", myTeamIndex);
     }
     localStorage.setItem("expo_username", myUserName);
     localStorage.setItem("expo_spectator", "1");
@@ -3217,7 +3214,6 @@
     localStorage.removeItem("expo_username");
     localStorage.removeItem("expo_team");
     localStorage.removeItem("expo_team_before_spectator");
-    localStorage.removeItem("expo_reconnect_team");
     localStorage.removeItem("expo_spectator");
     myUserName = "";
     isSpectator = false;
@@ -3258,11 +3254,8 @@
         // 既存のチーム情報がない場合でも、保存済みの所属チームがあればそれを優先。
         // それもない新規参加時だけ従来どおり人数の少ないチームから決める。
         const savedTeam = parseInt(localStorage.getItem("expo_team") ?? "-1");
-        const reconnectTeam = parseInt(localStorage.getItem("expo_reconnect_team") ?? "-1");
         if (savedTeam >= 0 && savedTeam < 4) {
           myTeamIndex = savedTeam;
-        } else if (reconnectTeam >= 0 && reconnectTeam < 4) {
-          myTeamIndex = reconnectTeam;
         } else {
           let counts = [0, 0, 0, 0];
           Object.values(allUsers).forEach(u => {
@@ -3278,7 +3271,6 @@
       }
 
       localStorage.setItem("expo_team", myTeamIndex);
-      localStorage.setItem("expo_reconnect_team", myTeamIndex);
       set(userRef, {
         name: myUserName,
         team: myTeamIndex,

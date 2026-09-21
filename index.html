@@ -1766,8 +1766,6 @@
   let cpuQuizTimers = [];
   let cpuKmyakTapTimers = [];
   let cpuKmyakSpawnTimers = [];
-  let kmyakResultRecoveryTimer = null;
-  let kmyakResultRecoveryEventId = null;
 
   let lotteryTimer = null;
   let lotteryTimeRemaining = 10;
@@ -2684,7 +2682,6 @@
 
         if (gameState.activeKmyakBattle) {
           renderKmyakBattleOverlay();
-          if (gameState.kmyakBattlePhase === "result") scheduleKmyakResultRecovery();
         } else {
           removeKmyakBattleOverlay();
         }
@@ -2729,15 +2726,6 @@
     onValue(ref(db, 'users'), (snapshot) => {
       const val = snapshot.val();
       allUsers = val || {};
-
-      // 観覧モードへ切り替えた直後に、以前の参加者レコードが
-      // 通信競合などで一時的に残っていても、観覧者として自分の名前を
-      // 参加者一覧に重複表示しないよう確実に削除する。
-      if (isSpectator && myUserName && allUsers[encodeURIComponent(myUserName)]) {
-        const { ref: dbRef, remove } = window.dbRef;
-        remove(dbRef(db, `users/${encodeURIComponent(myUserName)}`)).catch(() => {});
-        delete allUsers[encodeURIComponent(myUserName)];
-      }
 
       // リロード時は onDisconnect により一瞬 users が空になることがある。
       // この瞬間にリセットするとゲーム進行まで最初に戻ってしまうため、
@@ -2814,24 +2802,29 @@
 
           // クイズ中の判定は「新しく届いた回答」だけを対象にする。
           // Firebaseの再同期で、それまでの不正解回答がもう一度鳴るのを防ぐ。
+          // 10マス目の通常クイズは「現在の順番のチーム」ではなく、
+          // 参加している全チームのプレイヤーが回答できる。
+          // 他端末でローカルのactiveQuiz更新が少し遅れていても、
+          // Firebase上のgameState.activeQuizを正として判定する。
+          const quizForAnswer = gameState.activeQuiz || activeQuiz;
           if (
             chatHistoryInitialized &&
             !quizAnswerLocked &&
             !quizProcessedChatIds.has(chatId) &&
-            activeQuiz &&
-            activeQuiz.active &&
+            quizForAnswer &&
+            quizForAnswer.active &&
             c.timestamp &&
-            activeQuiz.startTime &&
-            c.timestamp >= activeQuiz.startTime &&
+            quizForAnswer.startTime &&
+            c.timestamp >= quizForAnswer.startTime &&
             !c.spectator &&
             Number(c.team) >= 0 && Number(c.team) < 4
           ) {
             quizProcessedChatIds.add(chatId);
-            if (activeQuiz.finalGoal && Number(c.team) !== Number(activeQuiz.targetTeam)) {
+            if (quizForAnswer.finalGoal && Number(c.team) !== Number(quizForAnswer.targetTeam)) {
               // ゴール最終試練は、20マス目にぴったり止まったチームだけが回答できる。
-            } else if (c.text.trim() === activeQuiz.answer) {
+            } else if (c.text.trim() === quizForAnswer.answer) {
               handleQuizCorrect(c.team, c.name);
-            } else if (activeQuiz.finalGoal) {
+            } else if (quizForAnswer.finalGoal) {
               // 最終問題は不正解でも終了しない。15秒間、何度でも挑戦できる。
               soundEffect.wrong();
               showWrongBanner(`${c.name}さんの回答「${c.text}」は不正解…！`);
@@ -4182,32 +4175,23 @@
     setTimeout(() => { if (banner) banner.remove(); }, 2000);
   }
 
-  async function startKmyakBattleEvent(teamIndex = gameState.currentTeamIndex) {
+  function startKmyakBattleEvent(teamIndex = gameState.currentTeamIndex) {
     if (isSpectator) return;
-    // 多人数接続時、各端末が同時に15マス目を検知して別々のイベントIDを作ると、
-    // 結果処理が競合してイベント後にゲームが止まることがある。
-    // Firebaseのトランザクションで「開始権」を1端末だけ取得してからイベントを開始する。
-    const { ref, runTransaction, db } = window.dbRef;
+    // イベントごとに固有IDを付け、複数端末から同じ結果処理が走らないようにする。
     const eventId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const claim = await runTransaction(ref(db, 'gameState'), current => {
-      if (!current || current.activeKmyakBattle || current.kmyakBattlePhase === 'countdown' || current.kmyakBattlePhase === 'battle' || current.kmyakBattlePhase === 'result') return;
-      return {
-        ...current,
-        activeKmyakBattle: true,
-        kmyakBattleEventId: eventId,
-        kmyakBattleResolved: false,
-        kmyakBattleTeamIndex: Number(teamIndex),
-        kmyakBattlePhase: 'countdown',
-        kmyakBattleCountdown: 3,
-        kmyakBattleTimer: 5,
-        kmyakTaps: [0, 0, 0, 0]
-      };
-    }).catch(() => null);
-    if (!claim || !claim.committed) return;
+    gameState.activeKmyakBattle = true;
+    gameState.kmyakBattleEventId = eventId;
+    gameState.kmyakBattleResolved = false;
+    gameState.kmyakBattleTeamIndex = Number(teamIndex);
+    gameState.kmyakBattlePhase = "countdown";
+    gameState.kmyakBattleCountdown = 3;
+    gameState.kmyakBattleTimer = 5;
+    gameState.kmyakTaps = [0, 0, 0, 0];
+    syncGameState();
 
-    gameState = claim.snapshot.val() || gameState;
     soundEffect.event();
     pushLog(`🏃‍♂️ 【大混雑脱出連打ゲーム 開始！】ボタン連打バトルが始まります！`);
+
     runKmyakBattleSequence();
   }
 
@@ -4419,97 +4403,6 @@
     }, 4500);
   }
 
-  async function recoverStuckKmyakBattle(eventId = null) {
-    if (!window.dbRef) return false;
-    const { ref, runTransaction, db } = window.dbRef;
-    const targetEventId = String(eventId || gameState.kmyakBattleEventId || '');
-    if (!targetEventId) return false;
-
-    const tx = await runTransaction(ref(db, 'gameState'), current => {
-      if (!current) return;
-      if (String(current.kmyakBattleEventId || '') !== targetEventId) return;
-      if (!current.activeKmyakBattle || current.kmyakBattlePhase !== 'result') return;
-
-      const eventTeamIndex = Number(current.kmyakBattleResultOwner ?? current.kmyakBattleTeamIndex);
-      const rank = Number(current.kmyakBattleResultRank);
-      if (!Number.isInteger(eventTeamIndex) || eventTeamIndex < 0 || eventTeamIndex > 3) return;
-      if (![1, 2, 3, 4].includes(rank)) return;
-
-      const currentTeam = Number(current.currentTeamIndex);
-      const playerIndices = Array.isArray(current.playerIndices) ? [...current.playerIndices] : [0,0,0,0];
-      const players = getRealTeamPlayers(currentTeam);
-      if (players.length > 0) {
-        playerIndices[currentTeam] = (Number(playerIndices[currentTeam] || 0) + 1) % players.length;
-      } else {
-        playerIndices[currentTeam] = 0;
-      }
-
-      const positions = Array.isArray(current.positions) ? [...current.positions] : [0,0,0,0];
-      const goalIndex = totalTiles - 1;
-      if (rank === 1) {
-        positions[eventTeamIndex] = Math.min(goalIndex, Number(positions[eventTeamIndex] || 0) + 2);
-      }
-
-      const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];
-      if (rank === 4) skipTurns[eventTeamIndex] = true;
-
-      return {
-        ...current,
-        positions,
-        skipTurns,
-        playerIndices,
-        currentTeamIndex: (currentTeam + 1) % 4,
-        turnActionLocked: false,
-        turnActionLockedAt: 0,
-        activeKmyakBattle: false,
-        kmyakBattlePhase: 'idle',
-        kmyakBattleTeamIndex: null,
-        kmyakBattleResultRank: null,
-        kmyakBattleResultOwner: null,
-        kmyakBattleResolved: false
-      };
-    }).catch(() => null);
-
-    if (!tx || !tx.committed) return false;
-
-    const before = gameState;
-    const after = tx.snapshot.val() || gameState;
-    const eventTeamIndex = Number(before.kmyakBattleResultOwner ?? before.kmyakBattleTeamIndex);
-    const rank = Number(before.kmyakBattleResultRank);
-    const oldPos = Number(before.positions?.[eventTeamIndex] || 0);
-    const newPos = Number(after.positions?.[eventTeamIndex] || oldPos);
-    if (rank === 1 && newPos > oldPos) {
-      publishSharedMoveEvent(eventTeamIndex, oldPos, newPos, false);
-    }
-
-    gameState = after;
-    if (kmyakResultRecoveryTimer) {
-      clearTimeout(kmyakResultRecoveryTimer);
-      kmyakResultRecoveryTimer = null;
-    }
-    kmyakResultRecoveryEventId = null;
-    removeKmyakBattleOverlay();
-    updateBoardImage();
-    updateUI();
-    isMoving = false;
-    scheduleCameraForNextTeam(50);
-    return true;
-  }
-
-  function scheduleKmyakResultRecovery() {
-    const eventId = String(gameState.kmyakBattleEventId || '');
-    if (!eventId || gameState.kmyakBattlePhase !== 'result') return;
-    if (kmyakResultRecoveryEventId === eventId && kmyakResultRecoveryTimer) return;
-
-    if (kmyakResultRecoveryTimer) clearTimeout(kmyakResultRecoveryTimer);
-    kmyakResultRecoveryEventId = eventId;
-    // 通常の結果処理を優先し、それでも残っている場合だけ救済する。
-    kmyakResultRecoveryTimer = setTimeout(() => {
-      kmyakResultRecoveryTimer = null;
-      recoverStuckKmyakBattle(eventId);
-    }, 6000);
-  }
-
   function renderKmyakBattleOverlay() {
     const board = document.getElementById('board');
     let overlay = board.querySelector('.kmyak-battle-overlay');
@@ -4633,7 +4526,6 @@
 
 
   async function startNextQuizRound(skipCountdown = false) {
-    const { ref, update, db } = window.dbRef;
     const sharedUsed = Array.isArray(gameState.quizUsedIndices)
       ? [...gameState.quizUsedIndices]
       : [...usedQuizIndices];
@@ -4645,15 +4537,8 @@
       gameState.quizCountdownActive = false;
       gameState.quizRoundCountdownStarted = false;
       gameState.quizUsedIndices = sharedUsed;
-      // クイズ終了時もgameState全体をset()せず、クイズ関連項目だけ更新する。
-      await update(ref(db, 'gameState'), {
-        activeQuiz: null,
-        quizTurnLocked: false,
-        quizCountdownActive: false,
-        quizRoundCountdownStarted: false,
-        quizUsedIndices: sharedUsed
-      });
-      closeQuizOverlay(false);
+      syncGameState();
+      closeQuizOverlay();
       pushLog("🧠 クイズバトルが終了しました！すごろくを再開します。");
       updateUI();
       isMoving = false;
@@ -4743,11 +4628,11 @@
     const isFinalGoal = !!qData.finalGoal;
 
     overlay.innerHTML = `
-      <div class="quiz-title">${isFinalGoal ? '<span style="font-size:28px; line-height:1.2; display:block;">🔥 クイズ館長からの挑戦状🔥</span>' : `会場でクイズ民と遭遇😃！クイズバトルだ！ (第${qData.questionNumber}/2問) 🧠`}</div>
+      <div class="quiz-title">${isFinalGoal ? '🔥 クイズ館長からの挑戦状🔥' : `会場でクイズ民と遭遇😃！クイズバトルだ！ (第${qData.questionNumber}/2問) 🧠`}</div>
       <div class="quiz-timer">残り時間: <span id="quiz-timer-sec">${quizTimeRemaining}</span>秒</div>
       <div class="quiz-emojis">${qData.emojis}</div>
       <div class="quiz-hint">ヒント: ${qData.hint}</div>
-      <div style="font-size:9px; color:#555;">${isFinalGoal ? '挑戦できるのは20マス目にぴったり止まったチームだけ！' : 'チャット欄に「ひらがな」で早く正解したチームが2マス進む！'}</div>
+      <div style="font-size:9px; color:#555;">${isFinalGoal ? '挑戦できるのは20マス目にぴったり止まったチームだけ！' : '参加者全員で挑戦！「ひらがな」で一番早く正解したチームが2マス進む！'}</div>
     `;
     board.appendChild(overlay);
   }
@@ -4822,7 +4707,7 @@
 
     hideBoardMessage();
     soundEffect.finalTrial();
-    showScreenMessage('<span style="font-size:28px !important; line-height:1.45; color:#ffeb3b; font-weight:900;">🔥クイズ館長からの挑戦状🔥<br><span style="font-size:20px !important; color:#fff;">「家に帰るまでが万博やで‼️<br>わたしのクイズを解かんかい‼️」</span></span>', 2500);
+    showScreenMessage('<span style="font-size:42px; line-height:1.45; color:#ffeb3b; font-weight:900;">🔥クイズ館長からの挑戦状🔥<br><span style="font-size:34px; color:#fff;">「家に帰るまでが万博やで‼️<br>わたしのクイズを解かんかい‼️」</span></span>', 2500);
 
     await new Promise(resolve => setTimeout(resolve, 2500));
     if (gameState.isGameOver) return;
@@ -4992,11 +4877,8 @@
       quizTimer = null;
     }
 
-    // クイズ終了時はgameState全体をset()しない。
-    // 複数端末の古いpositionsを丸ごと上書きすると、正解後の追加移動が
-    // 2マス進んだ直後に元の位置へ戻ることがあるため、必要な項目だけ更新する。
     gameState.activeQuiz = null;
-    await update(ref(db, 'gameState'), { activeQuiz: null, quizTurnLocked: true });
+    syncGameState();
 
     soundEffect.goal();
 
@@ -5013,18 +4895,16 @@
       // クイズの追加移動は、古いgameState全体をset()してしまうと、
       // 別端末の古いpositionsで正解チームの位置が元に戻ることがある。
       // 最新のFirebase状態に対して「このチームの位置だけ」を確定する。
-      // 位置の確定はpositions/{teamIndex}だけをトランザクション更新する。
-      // 他端末の古いgameState全体同期に位置を戻されないようにする。
       const positionRef = ref(db, `gameState/positions/${teamIndex}`);
       const positionClaim = await runTransaction(positionRef, current => {
         return forwardTarget;
       }).catch(() => null);
 
       // Firebaseで確定した位置をローカル状態にも反映。
-      const committedPosition = positionClaim && positionClaim.committed
-        ? Number(positionClaim.snapshot.val())
-        : forwardTarget;
-      gameState.positions[teamIndex] = committedPosition;
+      gameState.positions[teamIndex] = forwardTarget;
+      if (positionClaim && positionClaim.committed) {
+        gameState.positions[teamIndex] = Number(positionClaim.snapshot.val());
+      }
       updateBoardImage();
       updateUI();
 
@@ -6298,20 +6178,18 @@
 
     const proxyRollBtn = document.getElementById('proxy-roll-btn');
     if (proxyRollBtn) {
-      const kmyakResultRecoveryAvailable = gameState.activeKmyakBattle && gameState.kmyakBattlePhase === "result";
       if (gameState.gameStarted && !gameState.isGameOver && !activeQuiz && !gameState.activeQuiz &&
           !gameState.quizTurnLocked && !gameState.quizCountdownActive && !gameState.quizRoundCountdownStarted &&
-          !gameState.activeLottery && (!gameState.activeKmyakBattle || kmyakResultRecoveryAvailable) && !gameState.activeMyakuNyokki &&
+          !gameState.activeLottery && !gameState.activeKmyakBattle && !gameState.activeMyakuNyokki &&
           !gameState.activeMushroomTime && !gameState.mushroomTimeTurnLocked) {
         proxyRollBtn.disabled = false;
         proxyRollBtn.innerText = "🤖 代理で振る";
       } else {
         // イベント中だけ無効。turnActionLockedだけでは無効にしない。
-        const kmyakResultRecoveryAvailable = gameState.activeKmyakBattle && gameState.kmyakBattlePhase === "result";
         const eventBlocked = !gameState.gameStarted || gameState.isGameOver || activeQuiz ||
           gameState.activeQuiz || gameState.quizTurnLocked || gameState.quizCountdownActive ||
           gameState.quizRoundCountdownStarted || gameState.activeLottery ||
-          (gameState.activeKmyakBattle && !kmyakResultRecoveryAvailable) || gameState.activeMyakuNyokki ||
+          gameState.activeKmyakBattle || gameState.activeMyakuNyokki ||
           gameState.activeMushroomTime || gameState.mushroomTimeTurnLocked;
         proxyRollBtn.disabled = eventBlocked;
       }
@@ -6372,19 +6250,6 @@
   window.rollDiceProxy = async function() {
     if (!gameState.gameStarted || gameState.isGameOver) {
       alert('ゲームが開始されていません。');
-      return;
-    }
-
-    // 15マス目の結果画面が端末間の競合などで残った場合は、
-    // 「代理で振る」で結果表示を閉じ、次のターンへ復旧してからサイコロを振る。
-    if (gameState.activeKmyakBattle && gameState.kmyakBattlePhase === 'result') {
-      if (!confirm('15マス目のイベント結果画面が残っています。結果を確定して、次のターンを代理で進めますか？')) return;
-      const recovered = await recoverStuckKmyakBattle(gameState.kmyakBattleEventId);
-      if (!recovered) {
-        alert('復旧できませんでした。少し待ってからもう一度「代理で振る」を押してください。');
-        return;
-      }
-      await executeDiceRoll({ proxy: true, recovery: true });
       return;
     }
 

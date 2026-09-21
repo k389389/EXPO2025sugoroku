@@ -3101,28 +3101,20 @@
     myUserName = name;
     isSpectator = false;
     localStorage.removeItem("expo_spectator");
-
-    // 観覧モードへ切り替える前に所属していたチームが保存されていれば、
-    // そのチームへ戻る。保存がない通常参加時だけ従来どおりチームを決める。
-    const returnTeam = parseInt(localStorage.getItem("expo_team_before_spectator") ?? "-1");
-    if (returnTeam >= 0 && returnTeam < 4) {
-      myTeamIndex = returnTeam;
-    } else {
-      let counts = [0, 0, 0, 0];
-      Object.values(allUsers).forEach(u => {
-        if (u.team >= 0 && u.team < 4) counts[u.team]++;
-      });
-      let minVal = Math.min(...counts);
-      let candidateTeams = [];
-      counts.forEach((cnt, idx) => {
-        if (cnt === minVal) candidateTeams.push(idx);
-      });
-      myTeamIndex = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
-    }
+    
+    let counts = [0, 0, 0, 0];
+    Object.values(allUsers).forEach(u => {
+      if (u.team >= 0 && u.team < 4) counts[u.team]++;
+    });
+    let minVal = Math.min(...counts);
+    let candidateTeams = [];
+    counts.forEach((cnt, idx) => {
+      if (cnt === minVal) candidateTeams.push(idx);
+    });
+    myTeamIndex = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
 
     localStorage.setItem("expo_username", myUserName);
     localStorage.setItem("expo_team", myTeamIndex);
-    localStorage.removeItem("expo_team_before_spectator");
 
     document.getElementById('login-modal').style.display = 'none';
 
@@ -3148,12 +3140,6 @@
 
     myUserName = name;
     isSpectator = true;
-
-    // 観覧モードにする直前のチームを保存しておき、
-    // 後でプレイヤーに戻ったときに同じチームへ復帰できるようにする。
-    if (myTeamIndex >= 0 && myTeamIndex < 4) {
-      localStorage.setItem("expo_team_before_spectator", myTeamIndex);
-    }
     localStorage.setItem("expo_username", myUserName);
     localStorage.setItem("expo_spectator", "1");
     localStorage.removeItem("expo_team");
@@ -3213,7 +3199,6 @@
 
     localStorage.removeItem("expo_username");
     localStorage.removeItem("expo_team");
-    localStorage.removeItem("expo_team_before_spectator");
     localStorage.removeItem("expo_spectator");
     myUserName = "";
     isSpectator = false;
@@ -3251,23 +3236,16 @@
       if (snapshot.exists() && snapshot.val().team !== undefined) {
         myTeamIndex = snapshot.val().team;
       } else {
-        // 既存のチーム情報がない場合でも、保存済みの所属チームがあればそれを優先。
-        // それもない新規参加時だけ従来どおり人数の少ないチームから決める。
-        const savedTeam = parseInt(localStorage.getItem("expo_team") ?? "-1");
-        if (savedTeam >= 0 && savedTeam < 4) {
-          myTeamIndex = savedTeam;
-        } else {
-          let counts = [0, 0, 0, 0];
-          Object.values(allUsers).forEach(u => {
-            if (u.team >= 0 && u.team < 4) counts[u.team]++;
-          });
-          let minVal = Math.min(...counts);
-          let candidateTeams = [];
-          counts.forEach((cnt, idx) => {
-            if (cnt === minVal) candidateTeams.push(idx);
-          });
-          myTeamIndex = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
-        }
+        let counts = [0, 0, 0, 0];
+        Object.values(allUsers).forEach(u => {
+          if (u.team >= 0 && u.team < 4) counts[u.team]++;
+        });
+        let minVal = Math.min(...counts);
+        let candidateTeams = [];
+        counts.forEach((cnt, idx) => {
+          if (cnt === minVal) candidateTeams.push(idx);
+        });
+        myTeamIndex = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
       }
 
       localStorage.setItem("expo_team", myTeamIndex);

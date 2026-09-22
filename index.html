@@ -4805,7 +4805,7 @@
 
     hideBoardMessage();
     soundEffect.finalTrial();
-    showScreenMessage('<span style="font-size:28px !important; line-height:1.25; color:#ffeb3b; font-weight:900; white-space:nowrap;">🔥クイズ館長から挑戦状🔥<br><span style="font-size:28px !important; color:#fff; white-space:nowrap;">「万博の締めはな<br>そらクイズやろ‼️」</span></span>', 2500);
+    showScreenMessage('<span style="font-size:24px !important; line-height:1.25; color:#ffeb3b; font-weight:900; white-space:nowrap;">🔥クイズ館長から挑戦状🔥<br><span style="font-size:24px !important; color:#fff; white-space:nowrap;">「万博の締めはな<br>そらクイズやろ‼️」</span></span>', 2500);
 
     await new Promise(resolve => setTimeout(resolve, 2500));
     if (gameState.isGameOver) return;
@@ -5794,7 +5794,11 @@
       return;
     }
 
-    const diceVal = Math.floor(Math.random() * 6) + 1;
+    // 19マス目に止まっている場合は、ゴール直前の泥沼化を防ぐため
+    // 次の出目を「1=50%、2〜6=各10%」にする。
+    const diceVal = gameState.positions[gameState.currentTeamIndex] === 19
+      ? (Math.random() < 0.50 ? 1 : Math.floor(Math.random() * 5) + 2)
+      : Math.floor(Math.random() * 6) + 1;
     await animateDice(diceVal);
 
     const teamIndex = gameState.currentTeamIndex;

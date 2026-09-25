@@ -1711,7 +1711,6 @@
   let myTeamIndex = parseInt(localStorage.getItem("expo_team") ?? "0");
   let isSpectator = localStorage.getItem("expo_spectator") === "1";
   let isLoggingOut = false;
-  let isKicked = false;
   let allUsers = {};
   let allSpectators = {};
 
@@ -1855,22 +1854,11 @@
 
   function kickUser(targetName) {
     if (!confirm(`${targetName} さんをゲームから退出させますか？`)) return;
-
-    const { ref, update, db } = window.dbRef;
-    const encoded = encodeURIComponent(targetName);
-
-    // users だけを削除すると、対象端末側の onValue が「再接続」と判断して
-    // すぐに再登録してしまうため、強制退出フラグを同時に保存する。
-    update(ref(db), {
-      [`users/${encoded}`]: null,
-      [`spectators/${encoded}`]: null,
-      [`teamAssignments/${encoded}`]: null,
-      [`kickedUsers/${encoded}`]: { name: targetName, kickedAt: Date.now() }
-    }).then(() => {
+    
+    const { ref, remove, db } = window.dbRef;
+    remove(ref(db, `users/${encodeURIComponent(targetName)}`)).then(() => {
       pushLog(`🚪 ${targetName} さんが退出させられました。`);
       openTargetSelectView();
-    }).catch(err => {
-      console.warn('特定ユーザーの退出処理に失敗しました。', err);
     });
   }
 
@@ -2742,26 +2730,6 @@
       }
     });
 
-    onValue(ref(db, 'kickedUsers'), (snapshot) => {
-      const kicked = snapshot.val() || {};
-      if (!myUserName || isLoggingOut) return;
-      const encoded = encodeURIComponent(myUserName);
-      if (kicked[encoded]) {
-        // 強制退出された端末では自動再登録しない。
-        isKicked = true;
-        isLoggingOut = true;
-        localStorage.removeItem("expo_username");
-        localStorage.removeItem("expo_team");
-        localStorage.removeItem("expo_spectator");
-        myUserName = "";
-        isSpectator = false;
-        myTeamIndex = -1;
-        document.getElementById('login-modal').style.display = 'flex';
-        updateUI();
-        isLoggingOut = false;
-      }
-    });
-
     onValue(ref(db, 'users'), (snapshot) => {
       const val = snapshot.val();
       allUsers = val || {};
@@ -2771,7 +2739,7 @@
       // Firebase上のゲーム状態はそのまま保持して再接続する。
 
       if (!isSpectator && myUserName && !allUsers[encodeURIComponent(myUserName)]) {
-        if (isLoggingOut || isKicked) return;
+        if (isLoggingOut) return;
         registerUserToFirebase();
         return;
       }
@@ -3135,7 +3103,6 @@
     playJoinSound();
 
     myUserName = name;
-    isKicked = false;
     isSpectator = false;
     localStorage.removeItem("expo_spectator");
     
@@ -4787,42 +4754,12 @@
       gameState.quizCountdownActive = false;
       gameState.quizRoundCountdownStarted = false;
       gameState.quizUsedIndices = sharedUsed;
-      gameState.quizTurnLocked = false;
-      gameState.quizCountdownActive = false;
-      gameState.quizRoundCountdownStarted = false;
-      // クイズ終了時もgameState全体をset()せず、クイズ関連だけを更新。
-      const { ref: quizRef, update: quizUpdate, db: quizDb } = window.dbRef;
-      const finishClaim = await runTransaction(quizRef(quizDb, 'gameState'), current => {
-        if (!current || current.isGameOver) return;
-        if (current.activeQuiz || current.quizCountdownActive || current.quizRoundCountdownStarted) return;
-        if (!Array.isArray(current.quizUsedIndices) || current.quizUsedIndices.length < 2) return;
-        const team = Number(current.currentTeamIndex);
-        const players = Object.values(allUsers).filter(u => u && u.team === team && u.name).map(u => u.name);
-        const indices = Array.isArray(current.playerIndices) ? [...current.playerIndices] : [0,0,0,0];
-        indices[team] = players.length ? (Number(indices[team] || 0) + 1) % players.length : 0;
-        return {
-          ...current,
-          quizTurnLocked: false,
-          quizCountdownActive: false,
-          quizRoundCountdownStarted: false,
-          activeQuiz: null,
-          playerIndices: indices,
-          currentTeamIndex: (team + 1) % 4,
-          turnActionLocked: false,
-          turnActionLockedAt: 0
-        };
-      }).catch(() => null);
-      if (finishClaim && finishClaim.committed) {
-        gameState = finishClaim.snapshot.val() || gameState;
-      } else {
-        // 競合で別端末が先に終了処理した場合は、その最新状態に追従する。
-        gameState.quizTurnLocked = false;
-      }
-      closeQuizOverlay(false);
+      syncGameState();
+      closeQuizOverlay();
       pushLog("🧠 クイズバトルが終了しました！すごろくを再開します。");
       updateUI();
       isMoving = false;
-      scheduleCpuTurn();
+      advanceTurn();
       scheduleCameraForNextTeam(100);
       return;
     }
@@ -5158,13 +5095,7 @@
     }
 
     gameState.activeQuiz = null;
-    // クイズ中は他端末の古いgameState全体をset()すると、
-    // 正解チームの移動後のpositionsまで巻き戻ることがある。
-    // クイズ関連の項目だけをupdateして、他の状態は上書きしない。
-    update(ref(db, 'gameState'), {
-      activeQuiz: null,
-      quizTurnLocked: true
-    });
+    syncGameState();
 
     soundEffect.goal();
 
@@ -5227,10 +5158,7 @@
     }
 
     gameState.activeQuiz = null;
-    update(ref(db, 'gameState'), {
-      activeQuiz: null,
-      quizTurnLocked: true
-    });
+    syncGameState();
 
     showWrongBanner(message);
     pushLog(`⏰ ${message}`);
@@ -6542,47 +6470,6 @@
     if (gameState.gameStarted) scheduleCpuTurn();
   }
 
-  // 10マス目のクイズ2問終了後、端末間の競合で終了処理だけ残った場合の救済。
-  // 位置や他のゲーム状態を古い端末の内容で上書きしないよう、Firebase transactionで確定する。
-  async function recoverStuckQuizAfterTwoRounds() {
-    const { ref, runTransaction, db } = window.dbRef;
-    const result = await runTransaction(ref(db, 'gameState'), current => {
-      if (!current || current.isGameOver) return;
-      if (current.activeQuiz || current.quizCountdownActive || current.quizRoundCountdownStarted) return;
-      if (!current.quizTurnLocked) return;
-      if (!Array.isArray(current.quizUsedIndices) || current.quizUsedIndices.length < 2) return;
-
-      const team = Number(current.currentTeamIndex);
-      if (!Number.isInteger(team) || team < 0 || team >= 4) return;
-      const players = Object.values(allUsers).filter(u => u && u.team === team && u.name).map(u => u.name);
-      const indices = Array.isArray(current.playerIndices) ? [...current.playerIndices] : [0,0,0,0];
-      while (indices.length < 4) indices.push(0);
-      indices[team] = players.length ? (Number(indices[team] || 0) + 1) % players.length : 0;
-
-      return {
-        ...current,
-        activeQuiz: null,
-        quizTurnLocked: false,
-        quizCountdownActive: false,
-        quizRoundCountdownStarted: false,
-        playerIndices: indices,
-        currentTeamIndex: (team + 1) % 4,
-        turnActionLocked: false,
-        turnActionLockedAt: 0
-      };
-    }).catch(() => null);
-
-    if (!result || !result.committed) return false;
-    gameState = result.snapshot.val() || gameState;
-    activeQuiz = null;
-    quizAnswerLocked = false;
-    closeQuizOverlay(false);
-    updateUI();
-    scheduleCpuTurn();
-    scheduleCameraForNextTeam(100);
-    return true;
-  }
-
   window.rollDiceProxy = async function() {
     if (!gameState.gameStarted || gameState.isGameOver) {
       alert('ゲームが開始されていません。');
@@ -6605,17 +6492,6 @@
       // 別端末がすでに次のターンへ進めていた場合は、
       // 現在のFirebase状態を優先し、同じターンを二重に進めない。
       await executeDiceRoll({ proxy: true, recovery: true });
-      return;
-    }
-
-    // 10マス目のクイズ2問が終わっているのに終了処理だけ止まった場合は、
-    // 「代理で振る」を復旧ボタンとして使えるようにする。
-    if (!activeQuiz && !gameState.activeQuiz && gameState.quizTurnLocked &&
-        !gameState.quizCountdownActive && !gameState.quizRoundCountdownStarted &&
-        Array.isArray(gameState.quizUsedIndices) && gameState.quizUsedIndices.length >= 2) {
-      const recovered = await recoverStuckQuizAfterTwoRounds();
-      if (recovered) return;
-      alert('クイズ終了処理を復旧できませんでした。少し待ってからもう一度「代理で振る」を押してください。');
       return;
     }
 

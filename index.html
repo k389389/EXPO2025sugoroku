@@ -1855,10 +1855,24 @@
   function kickUser(targetName) {
     if (!confirm(`${targetName} さんをゲームから退出させますか？`)) return;
     
-    const { ref, remove, db } = window.dbRef;
-    remove(ref(db, `users/${encodeURIComponent(targetName)}`)).then(() => {
+    const { ref, update, db } = window.dbRef;
+    const encodedTarget = encodeURIComponent(targetName);
+
+    // usersだけを削除すると、退出させられた端末側の
+    // onValue('users') が切断と判断して再登録してしまうため、
+    // 強制退出フラグも同時に保存する。
+    update(ref(db), {
+      [`users/${encodedTarget}`]: null,
+      [`teamAssignments/${encodedTarget}`]: null,
+      [`kickedUsers/${encodedTarget}`]: {
+        name: targetName,
+        timestamp: Date.now()
+      }
+    }).then(() => {
       pushLog(`🚪 ${targetName} さんが退出させられました。`);
       openTargetSelectView();
+    }).catch(err => {
+      console.warn('ユーザー退出処理に失敗しました。', err);
     });
   }
 
@@ -2759,6 +2773,38 @@
       updateUI();
     });
 
+    onValue(ref(db, 'kickedUsers'), (snapshot) => {
+      const kickedUsers = snapshot.val() || {};
+      const kicked = myUserName && kickedUsers[encodeURIComponent(myUserName)];
+
+      if (kicked && !isSpectator && !isLoggingOut) {
+        isLoggingOut = true;
+
+        if (cpuTimer) {
+          clearTimeout(cpuTimer);
+          cpuTimer = null;
+        }
+        cpuQuizTimers.forEach(t => clearTimeout(t));
+        cpuQuizTimers = [];
+        lastCpuTurnKey = null;
+
+        // 強制退出された本人の端末でも、再登録されないように
+        // ローカルの参加状態を解除する。
+        myUserName = "";
+        isSpectator = false;
+        myTeamIndex = -1;
+        localStorage.removeItem("expo_username");
+        localStorage.removeItem("expo_team");
+        localStorage.removeItem("expo_spectator");
+
+        document.getElementById('login-modal').style.display = 'flex';
+        document.getElementById('input-username').value = '';
+        isLoggingOut = false;
+        updateUI();
+        alert('管理者によりゲームから退出させられました。');
+      }
+    });
+
     onValue(ref(db, 'spectators'), (snapshot) => {
       allSpectators = snapshot.val() || {};
       updateUI();
@@ -3117,8 +3163,12 @@
     try { liveTalkStartListeners(); } catch (e) {}
 
     if (window.dbRef) {
-      const { ref, remove, db } = window.dbRef;
-      remove(ref(db, `spectators/${encodeURIComponent(myUserName)}`));
+      const { ref, update, db } = window.dbRef;
+      const encoded = encodeURIComponent(myUserName);
+      update(ref(db), {
+        [`spectators/${encoded}`]: null,
+        [`kickedUsers/${encoded}`]: null
+      });
     }
     registerUserToFirebase();
   }

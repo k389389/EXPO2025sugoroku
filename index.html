@@ -1736,6 +1736,7 @@
     kmyakBattleTeamIndex: null,
     kmyakBattleResultRank: null,
     kmyakBattleResultOwner: null,
+    kmyakBattleRank4TeamIndex: null,
     activeLottery: false,
     activeKmyakBattle: false,
     kmyakBattlePhase: "idle",
@@ -2532,6 +2533,7 @@
         if (val.kmyakBattleTeamIndex === undefined) val.kmyakBattleTeamIndex = null;
         if (val.kmyakBattleResultRank === undefined) val.kmyakBattleResultRank = null;
         if (val.kmyakBattleResultOwner === undefined) val.kmyakBattleResultOwner = null;
+        if (val.kmyakBattleRank4TeamIndex === undefined) val.kmyakBattleRank4TeamIndex = null;
         if (val.activeLottery === undefined) val.activeLottery = false;
         if (val.activeKmyakBattle === undefined) val.activeKmyakBattle = false;
         if (val.kmyakBattlePhase === undefined) val.kmyakBattlePhase = "idle";
@@ -4331,6 +4333,7 @@
     gameState.kmyakBattlePhase = "result";
     gameState.kmyakBattleResultRank = rank;
     gameState.kmyakBattleResultOwner = eventTeamIndex;
+    gameState.kmyakBattleRank4TeamIndex = ranking[3];
     gameState.kmyakBattleResolved = true;
     syncGameState();
 
@@ -4340,7 +4343,7 @@
       pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は連打バトル1位！大混雑を抜け出すことに成功。2マス進む。`);
     } else if (rank === 4) {
       soundEffect.wrong();
-      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は4位。大混雑を抜け出せなかった。1回休み。`);
+      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は4位。大混雑を抜け出せなかった。2マス戻る。`);
     } else {
       pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は${rank}位。今回はそのままです。`);
     }
@@ -4354,12 +4357,17 @@
 
       const oldPos = Number(gameState.positions[eventTeamIndex] || 0);
       const goalIndex = totalTiles - 1;
+      const rank4TeamIndex = rank === 4 ? Number(gameState.kmyakBattleRank4TeamIndex) : eventTeamIndex;
+      const moveOldPos = Number(gameState.positions[rank4TeamIndex] || 0);
       const forwardTarget = rank === 1 ? Math.min(goalIndex, oldPos + 2) : oldPos;
+      const backTarget = rank === 4 ? Math.max(0, moveOldPos - 2) : oldPos;
       const { ref, runTransaction, db } = window.dbRef;
 
       // 移動アニメーションを先に共有。ゲーム状態そのものは下のトランザクションで確定する。
       if (rank === 1 && forwardTarget > oldPos) {
         publishSharedMoveEvent(eventTeamIndex, oldPos, forwardTarget, false);
+      } else if (rank === 4 && backTarget < moveOldPos) {
+        publishSharedMoveEvent(rank4TeamIndex, moveOldPos, backTarget, true);
       }
 
       const finalize = await runTransaction(ref(db, 'gameState'), current => {
@@ -4378,9 +4386,16 @@
 
         const positions = Array.isArray(current.positions) ? [...current.positions] : [0,0,0,0];
         if (rank === 1) positions[eventTeamIndex] = forwardTarget;
+        else if (rank === 4) {
+          const rank4TeamIndex = Number(current.kmyakBattleRank4TeamIndex);
+          if (Number.isInteger(rank4TeamIndex) && rank4TeamIndex >= 0 && rank4TeamIndex < 4) {
+            positions[rank4TeamIndex] = Math.max(0, Number(positions[rank4TeamIndex] || 0) - 2);
+          }
+        }
 
         const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];
-        if (rank === 4) skipTurns[eventTeamIndex] = true;
+        // 15マス目の4位は「1回休み」ではなく2マス戻る。
+        // 既存のskipTurnsは、このイベントでは変更しない。
 
         return {
           ...current,
@@ -4395,6 +4410,7 @@
           kmyakBattleTeamIndex: null,
           kmyakBattleResultRank: null,
           kmyakBattleResultOwner: null,
+          kmyakBattleRank4TeamIndex: null,
           kmyakBattleResolved: false
         };
       }).catch(() => null);
@@ -4412,10 +4428,51 @@
 
   async function recoverStuckKmyakBattle(eventId = null) {
     if (!window.dbRef) return false;
-    const { ref, runTransaction, db } = window.dbRef;
-    const targetEventId = String(eventId || gameState.kmyakBattleEventId || '');
+    const { ref, runTransaction, get, db } = window.dbRef;
+    const localEventId = String(eventId || gameState.kmyakBattleEventId || '');
+    if (!localEventId) return false;
+
+    // 端末側のgameStateが古いまま残っている場合があるため、
+    // 「代理で振る」を押した端末では、まずFirebaseの最新状態を直接取得する。
+    // これにより、別端末がすでに結果処理を終えていても「復旧できませんでした」
+    // にならず、その最新状態へ追従できる。
+    let latestState = null;
+    try {
+      const latestSnapshot = await get(ref(db, 'gameState'));
+      latestState = latestSnapshot.val() || null;
+    } catch (e) {
+      latestState = null;
+    }
+
+    if (latestState) {
+      const latestEventId = String(latestState.kmyakBattleEventId || '');
+
+      // 別端末がすでにこのイベントを正常終了させていた場合は、
+      // その最新状態をこの端末へ反映して復旧完了とする。
+      if (latestEventId === localEventId &&
+          (!latestState.activeKmyakBattle || latestState.kmyakBattlePhase === 'idle')) {
+        gameState = latestState;
+        if (kmyakResultRecoveryTimer) {
+          clearTimeout(kmyakResultRecoveryTimer);
+          kmyakResultRecoveryTimer = null;
+        }
+        kmyakResultRecoveryEventId = null;
+        removeKmyakBattleOverlay();
+        updateBoardImage();
+        updateUI();
+        isMoving = false;
+        scheduleCameraForNextTeam(50);
+        return true;
+      }
+    }
+
+    const targetEventId = String(
+      (latestState && latestState.kmyakBattleEventId) || localEventId
+    );
     if (!targetEventId) return false;
 
+    // 最新状態を使って結果画面の復旧を行う。
+    // 同時に複数端末から押されても、Firebase transactionで1回だけ確定する。
     const tx = await runTransaction(ref(db, 'gameState'), current => {
       if (!current) return;
       if (String(current.kmyakBattleEventId || '') !== targetEventId) return;
@@ -4437,12 +4494,18 @@
 
       const positions = Array.isArray(current.positions) ? [...current.positions] : [0,0,0,0];
       const goalIndex = totalTiles - 1;
+      const currentPos = Number(positions[eventTeamIndex] || 0);
       if (rank === 1) {
-        positions[eventTeamIndex] = Math.min(goalIndex, Number(positions[eventTeamIndex] || 0) + 2);
+        positions[eventTeamIndex] = Math.min(goalIndex, currentPos + 2);
+      } else if (rank === 4) {
+        const rank4TeamIndex = Number(current.kmyakBattleRank4TeamIndex);
+        if (Number.isInteger(rank4TeamIndex) && rank4TeamIndex >= 0 && rank4TeamIndex < 4) {
+          positions[rank4TeamIndex] = Math.max(0, Number(positions[rank4TeamIndex] || 0) - 2);
+        }
       }
 
       const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];
-      if (rank === 4) skipTurns[eventTeamIndex] = true;
+      // 15マス目の4位は1回休みではないため、skipTurnsは変更しない。
 
       return {
         ...current,
@@ -4461,16 +4524,43 @@
       };
     }).catch(() => null);
 
-    if (!tx || !tx.committed) return false;
+    if (!tx || !tx.committed) {
+      // 直前に別端末が確定した場合も、最後に最新状態を読み直す。
+      try {
+        const latestSnapshot = await get(ref(db, 'gameState'));
+        const afterLatest = latestSnapshot.val() || null;
+        if (afterLatest && String(afterLatest.kmyakBattleEventId || '') === targetEventId &&
+            (!afterLatest.activeKmyakBattle || afterLatest.kmyakBattlePhase === 'idle')) {
+          gameState = afterLatest;
+          if (kmyakResultRecoveryTimer) {
+            clearTimeout(kmyakResultRecoveryTimer);
+            kmyakResultRecoveryTimer = null;
+          }
+          kmyakResultRecoveryEventId = null;
+          removeKmyakBattleOverlay();
+          updateBoardImage();
+          updateUI();
+          isMoving = false;
+          scheduleCameraForNextTeam(50);
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    }
 
-    const before = gameState;
+    const before = latestState || gameState;
     const after = tx.snapshot.val() || gameState;
-    const eventTeamIndex = Number(before.kmyakBattleResultOwner ?? before.kmyakBattleTeamIndex);
+    const eventTeamIndex = Number(
+      before.kmyakBattleResultOwner ?? before.kmyakBattleTeamIndex
+    );
     const rank = Number(before.kmyakBattleResultRank);
-    const oldPos = Number(before.positions?.[eventTeamIndex] || 0);
-    const newPos = Number(after.positions?.[eventTeamIndex] || oldPos);
+    const moveTeamIndex = rank === 4 ? Number(before.kmyakBattleRank4TeamIndex) : eventTeamIndex;
+    const oldPos = Number(before.positions?.[moveTeamIndex] || 0);
+    const newPos = Number(after.positions?.[moveTeamIndex] || oldPos);
     if (rank === 1 && newPos > oldPos) {
-      publishSharedMoveEvent(eventTeamIndex, oldPos, newPos, false);
+      publishSharedMoveEvent(moveTeamIndex, oldPos, newPos, false);
+    } else if (rank === 4 && newPos < oldPos) {
+      publishSharedMoveEvent(moveTeamIndex, oldPos, newPos, true);
     }
 
     gameState = after;
@@ -4541,7 +4631,7 @@
       if (rank === 1) {
         resultText = `${teamNames[owner] || ""}：大混雑を抜け出すことに成功。2マス進む。`;
       } else if (rank === 4) {
-        resultText = `${teamNames[owner] || ""}：大混雑を抜け出せなかった。1回休み。`;
+        resultText = `${teamNames[owner] || ""}：大混雑を抜け出せなかった。2マス戻る。`;
       } else if (rank === 2 || rank === 3) {
         resultText = `${teamNames[owner] || ""}：${rank}位。そのままです。`;
       }
@@ -6361,11 +6451,17 @@
     // 「代理で振る」で結果表示を閉じ、次のターンへ復旧してからサイコロを振る。
     if (gameState.activeKmyakBattle && gameState.kmyakBattlePhase === 'result') {
       if (!confirm('15マス目のイベント結果画面が残っています。結果を確定して、次のターンを代理で進めますか？')) return;
+
+      // 押した端末のローカル状態ではなくFirebaseの最新状態を基準に復旧する。
+      // 別端末がすでに復旧済みでも、ここで最新状態へ追従できる。
       const recovered = await recoverStuckKmyakBattle(gameState.kmyakBattleEventId);
       if (!recovered) {
-        alert('復旧できませんでした。少し待ってからもう一度「代理で振る」を押してください。');
+        alert('まだ復旧処理中です。少し待ってからもう一度「代理で振る」を押してください。');
         return;
       }
+
+      // 別端末がすでに次のターンへ進めていた場合は、
+      // 現在のFirebase状態を優先し、同じターンを二重に進めない。
       await executeDiceRoll({ proxy: true, recovery: true });
       return;
     }

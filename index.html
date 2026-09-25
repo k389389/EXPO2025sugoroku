@@ -1711,6 +1711,7 @@
   let myTeamIndex = parseInt(localStorage.getItem("expo_team") ?? "0");
   let isSpectator = localStorage.getItem("expo_spectator") === "1";
   let isLoggingOut = false;
+  let isKicked = false;
   let allUsers = {};
   let allSpectators = {};
 
@@ -1854,11 +1855,22 @@
 
   function kickUser(targetName) {
     if (!confirm(`${targetName} さんをゲームから退出させますか？`)) return;
-    
-    const { ref, remove, db } = window.dbRef;
-    remove(ref(db, `users/${encodeURIComponent(targetName)}`)).then(() => {
+
+    const { ref, update, db } = window.dbRef;
+    const encoded = encodeURIComponent(targetName);
+
+    // users だけを削除すると、対象端末側の onValue が「再接続」と判断して
+    // すぐに再登録してしまうため、強制退出フラグを同時に保存する。
+    update(ref(db), {
+      [`users/${encoded}`]: null,
+      [`spectators/${encoded}`]: null,
+      [`teamAssignments/${encoded}`]: null,
+      [`kickedUsers/${encoded}`]: { name: targetName, kickedAt: Date.now() }
+    }).then(() => {
       pushLog(`🚪 ${targetName} さんが退出させられました。`);
       openTargetSelectView();
+    }).catch(err => {
+      console.warn('特定ユーザーの退出処理に失敗しました。', err);
     });
   }
 
@@ -2730,6 +2742,26 @@
       }
     });
 
+    onValue(ref(db, 'kickedUsers'), (snapshot) => {
+      const kicked = snapshot.val() || {};
+      if (!myUserName || isLoggingOut) return;
+      const encoded = encodeURIComponent(myUserName);
+      if (kicked[encoded]) {
+        // 強制退出された端末では自動再登録しない。
+        isKicked = true;
+        isLoggingOut = true;
+        localStorage.removeItem("expo_username");
+        localStorage.removeItem("expo_team");
+        localStorage.removeItem("expo_spectator");
+        myUserName = "";
+        isSpectator = false;
+        myTeamIndex = -1;
+        document.getElementById('login-modal').style.display = 'flex';
+        updateUI();
+        isLoggingOut = false;
+      }
+    });
+
     onValue(ref(db, 'users'), (snapshot) => {
       const val = snapshot.val();
       allUsers = val || {};
@@ -2739,7 +2771,7 @@
       // Firebase上のゲーム状態はそのまま保持して再接続する。
 
       if (!isSpectator && myUserName && !allUsers[encodeURIComponent(myUserName)]) {
-        if (isLoggingOut) return;
+        if (isLoggingOut || isKicked) return;
         registerUserToFirebase();
         return;
       }
@@ -3103,6 +3135,7 @@
     playJoinSound();
 
     myUserName = name;
+    isKicked = false;
     isSpectator = false;
     localStorage.removeItem("expo_spectator");
     

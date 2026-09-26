@@ -4377,28 +4377,30 @@
       averages[i] = totalTaps / memberCount;
     }
 
-    // 連打数（1人あたり平均）を順位化。完全同率の場合はチーム番号で決める。
+    // 連打数（1人あたり平均）を順位化。同じ平均回数なら同順位とする。
     const ranking = [0, 1, 2, 3].sort((a, b) => {
       if (averages[b] !== averages[a]) return averages[b] - averages[a];
       return a - b;
     });
-    const rank = ranking.indexOf(eventTeamIndex) + 1;
+    const eventAverage = averages[eventTeamIndex];
+    const rank = 1 + averages.filter(v => v > eventAverage).length;
+    const isLowest = averages.every(v => eventAverage <= v);
 
     gameState.kmyakBattlePhase = "result";
     gameState.kmyakBattleResultRank = rank;
     gameState.kmyakBattleResultOwner = eventTeamIndex;
-    gameState.kmyakBattleRank4TeamIndex = ranking[3];
+    gameState.kmyakBattleRank4TeamIndex = null;
     gameState.kmyakBattleRanking = [...ranking];
     gameState.kmyakBattleResolved = true;
     syncGameState();
 
     const teamName = teamNames[eventTeamIndex];
-    if (rank === 1) {
+    if (isLowest) {
+      soundEffect.wrong();
+      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は最下位（${rank}位）。大混雑を抜け出せず、2マス戻る。`);
+    } else if (rank === 1) {
       soundEffect.goal();
       pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は連打バトル1位！大混雑を抜け出すことに成功。2マス進む。`);
-    } else if (rank === 4) {
-      soundEffect.wrong();
-      pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は4位。大混雑を抜け出せなかった。2マス戻る。`);
     } else {
       pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：${teamName} は${rank}位。今回はそのままです。`);
     }
@@ -4412,24 +4414,15 @@
 
       const oldPos = Number(gameState.positions[eventTeamIndex] || 0);
       const goalIndex = totalTiles - 1;
-      const storedRanking = Array.isArray(gameState.kmyakBattleRanking) ? gameState.kmyakBattleRanking : null;
-      const rank4TeamIndex = storedRanking && storedRanking.length >= 4
-        ? Number(storedRanking[3])
-        : Number(gameState.kmyakBattleRank4TeamIndex);
-      const moveOldPos = (Number.isInteger(rank4TeamIndex) && rank4TeamIndex >= 0 && rank4TeamIndex < 4)
-        ? Number(gameState.positions[rank4TeamIndex] || 0)
-        : 0;
-      const forwardTarget = rank === 1 ? Math.min(goalIndex, oldPos + 2) : oldPos;
-      const backTarget = (Number.isInteger(rank4TeamIndex) && rank4TeamIndex >= 0 && rank4TeamIndex < 4)
-        ? Math.max(0, moveOldPos - 2)
-        : moveOldPos;
+      const forwardTarget = (!isLowest && rank === 1) ? Math.min(goalIndex, oldPos + 2) : oldPos;
+      const backTarget = isLowest ? Math.max(0, oldPos - 2) : oldPos;
       const { ref, runTransaction, db } = window.dbRef;
 
       // 移動アニメーションを先に共有。ゲーム状態そのものは下のトランザクションで確定する。
-      if (rank === 1 && forwardTarget > oldPos) {
+      if (forwardTarget > oldPos) {
         publishSharedMoveEvent(eventTeamIndex, oldPos, forwardTarget, false);
-      } else if (rank === 4 && backTarget < moveOldPos) {
-        publishSharedMoveEvent(rank4TeamIndex, moveOldPos, backTarget, true);
+      } else if (backTarget < oldPos) {
+        publishSharedMoveEvent(eventTeamIndex, oldPos, backTarget, true);
       }
 
       const finalize = await runTransaction(ref(db, 'gameState'), current => {
@@ -4447,14 +4440,10 @@
         }
 
         const positions = Array.isArray(current.positions) ? [...current.positions] : [0,0,0,0];
-        if (rank === 1) positions[eventTeamIndex] = forwardTarget;
-        // 4位のチームは、15マス目に止まったチームとは無関係に2マス戻る。
-        const storedRanking = Array.isArray(current.kmyakBattleRanking) ? current.kmyakBattleRanking : null;
-        const rank4TeamIndex = storedRanking && storedRanking.length >= 4
-          ? Number(storedRanking[3])
-          : Number(current.kmyakBattleRank4TeamIndex);
-        if (Number.isInteger(rank4TeamIndex) && rank4TeamIndex >= 0 && rank4TeamIndex < 4) {
-          positions[rank4TeamIndex] = Math.max(0, Number(positions[rank4TeamIndex] || 0) - 2);
+        if (isLowest) {
+          positions[eventTeamIndex] = Math.max(0, Number(positions[eventTeamIndex] || 0) - 2);
+        } else if (rank === 1) {
+          positions[eventTeamIndex] = forwardTarget;
         }
 
         const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];
@@ -4558,18 +4547,19 @@
       }
 
       const positions = Array.isArray(current.positions) ? [...current.positions] : [0,0,0,0];
-      const goalIndex = totalTiles - 1;
-      const currentPos = Number(positions[eventTeamIndex] || 0);
-      if (rank === 1) {
-        positions[eventTeamIndex] = Math.min(goalIndex, currentPos + 2);
+      const averages = [0, 0, 0, 0];
+      for (let i = 0; i < 4; i++) {
+        const totalTaps = Number(current.kmyakTaps?.[i] || 0);
+        const memberCount = Math.max(1, teamPlayers[i].filter(name => !name.includes("募集中")).length);
+        averages[i] = totalTaps / memberCount;
       }
-      // 4位のチームは、15マス目に止まったチームとは無関係に2マス戻る。
-      const storedRanking = Array.isArray(current.kmyakBattleRanking) ? current.kmyakBattleRanking : null;
-      const rank4TeamIndex = storedRanking && storedRanking.length >= 4
-        ? Number(storedRanking[3])
-        : Number(current.kmyakBattleRank4TeamIndex);
-      if (Number.isInteger(rank4TeamIndex) && rank4TeamIndex >= 0 && rank4TeamIndex < 4) {
-        positions[rank4TeamIndex] = Math.max(0, Number(positions[rank4TeamIndex] || 0) - 2);
+      const eventAverage = averages[eventTeamIndex];
+      const isLowest = averages.every(v => eventAverage <= v);
+      const currentPos = Number(positions[eventTeamIndex] || 0);
+      if (isLowest) {
+        positions[eventTeamIndex] = Math.max(0, currentPos - 2);
+      } else if (rank === 1) {
+        positions[eventTeamIndex] = Math.min(totalTiles - 1, currentPos + 2);
       }
 
       const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];
@@ -4622,14 +4612,12 @@
       before.kmyakBattleResultOwner ?? before.kmyakBattleTeamIndex
     );
     const rank = Number(before.kmyakBattleResultRank);
-    const storedRanking = Array.isArray(before.kmyakBattleRanking) ? before.kmyakBattleRanking : null;
-    const rank4Index = storedRanking && storedRanking.length >= 4 ? Number(storedRanking[3]) : Number(before.kmyakBattleRank4TeamIndex);
-    const moveTeamIndex = rank === 4 ? rank4Index : eventTeamIndex;
+    const moveTeamIndex = eventTeamIndex;
     const oldPos = Number(before.positions?.[moveTeamIndex] || 0);
     const newPos = Number(after.positions?.[moveTeamIndex] || oldPos);
-    if (rank === 1 && newPos > oldPos) {
+    if (newPos > oldPos) {
       publishSharedMoveEvent(moveTeamIndex, oldPos, newPos, false);
-    } else if (rank === 4 && newPos < oldPos) {
+    } else if (newPos < oldPos) {
       publishSharedMoveEvent(moveTeamIndex, oldPos, newPos, true);
     }
 
@@ -4654,11 +4642,11 @@
 
     if (kmyakResultRecoveryTimer) clearTimeout(kmyakResultRecoveryTimer);
     kmyakResultRecoveryEventId = eventId;
-    // 通常の結果処理を優先し、それでも残っている場合だけ救済する。
+    // 結果表示が残った場合も、全端末のどれかが確実に次ターンへ進められるよう救済する。
     kmyakResultRecoveryTimer = setTimeout(() => {
       kmyakResultRecoveryTimer = null;
       recoverStuckKmyakBattle(eventId);
-    }, 6000);
+    }, 4800);
   }
 
   function renderKmyakBattleOverlay() {
@@ -4698,21 +4686,14 @@
       const owner = Number(gameState.kmyakBattleResultOwner);
       const rank = Number(gameState.kmyakBattleResultRank);
       let resultText = "";
-      const rank4Index = Array.isArray(gameState.kmyakBattleRanking) && gameState.kmyakBattleRanking.length >= 4
-        ? Number(gameState.kmyakBattleRanking[3])
-        : Number(gameState.kmyakBattleRank4TeamIndex);
-      if (rank === 1) {
-        resultText = `${teamNames[owner] || ""}：大混雑を抜け出すことに成功。2マス進む。`;
-        if (rank4Index !== owner && Number.isInteger(rank4Index) && rank4Index >= 0 && rank4Index < 4) {
-          resultText += `<br>${teamNames[rank4Index] || ""}：4位のため2マス戻る。`;
-        }
-      } else if (rank === 4) {
-        resultText = `${teamNames[owner] || ""}：4位のため2マス戻る。`;
-      } else if (rank === 2 || rank === 3) {
+      const ownerAverage = Number(gameState.kmyakTaps?.[owner] || 0) / Math.max(1, teamPlayers[owner].filter(name => !name.includes("募集中")).length);
+      const isLowest = [0,1,2,3].every(i => ownerAverage <= Number(gameState.kmyakTaps?.[i] || 0) / Math.max(1, teamPlayers[i].filter(name => !name.includes("募集中")).length));
+      if (isLowest) {
+        resultText = `${teamNames[owner] || ""}：${rank}位（最下位）。2マス戻る。`;
+      } else if (rank === 1) {
+        resultText = `${teamNames[owner] || ""}：1位。大混雑を抜け出すことに成功。2マス進む。`;
+      } else {
         resultText = `${teamNames[owner] || ""}：${rank}位。そのままです。`;
-        if (rank4Index !== owner && Number.isInteger(rank4Index) && rank4Index >= 0 && rank4Index < 4) {
-          resultText += `<br>${teamNames[rank4Index] || ""}：4位のため2マス戻る。`;
-        }
       }
 
       overlay.innerHTML = `

@@ -1712,7 +1712,6 @@
   let isSpectator = localStorage.getItem("expo_spectator") === "1";
   let isLoggingOut = false;
   let allUsers = {};
-  let isRegisteringUser = false;
   let allSpectators = {};
 
   let gameState = {
@@ -2755,7 +2754,8 @@
 
       if (!isSpectator && myUserName && !allUsers[encodeURIComponent(myUserName)]) {
         if (isLoggingOut) return;
-        if (!isRegisteringUser) registerUserToFirebase();
+        registerUserToFirebase();
+        return;
       }
 
       if (myUserName && allUsers[encodeURIComponent(myUserName)]) {
@@ -3136,7 +3136,7 @@
     scheduleCameraForNextTeam(50);
   }
 
-  async function handleLogin() {
+  function handleLogin() {
     const nameInput = document.getElementById('input-username');
     const name = nameInput.value.trim();
 
@@ -3170,12 +3170,7 @@
         [`kickedUsers/${encoded}`]: null
       });
     }
-    const registered = await registerUserToFirebase();
-    if (!registered) {
-      alert("参加者の登録に失敗しました。Firebaseへの接続・権限を確認してください。");
-      document.getElementById('login-modal').style.display = 'flex';
-      return;
-    }
+    registerUserToFirebase();
   }
 
   function handleSpectatorLogin() {
@@ -3272,76 +3267,50 @@
     });
   }
 
-  async function registerUserToFirebase() {
-    if (!myUserName || isSpectator || !window.dbRef) return false;
-    if (isRegisteringUser) return false;
-
-    isRegisteringUser = true;
-    const { ref, set, get, onDisconnect, db } = window.dbRef;
+  function registerUserToFirebase() {
+    if (!myUserName || isSpectator) return;
+    const { ref, set, get, runTransaction, onDisconnect, db } = window.dbRef;
     const encodedName = encodeURIComponent(myUserName);
     const userRef = ref(db, `users/${encodedName}`);
+    const teamRef = ref(db, `teamAssignments/${encodedName}`);
 
-    try {
-      // まず現在の参加者一覧・保存済みチームからチームを決定する。
-      // users の読み込みに依存せず、参加者登録そのものを先に確実に行う。
-      let assignedTeam = Number(localStorage.getItem("expo_team"));
-      const currentUser = allUsers[encodedName];
+    // 明示的に「退出」を押さずに閉じた場合も参加者一覧から自動削除する。
+    // チーム情報は users とは別に保存するため、ここで削除されない。
+    onDisconnect(userRef).remove();
 
-      if (currentUser && Number.isInteger(Number(currentUser.team)) &&
-          Number(currentUser.team) >= 0 && Number(currentUser.team) < 4) {
-        assignedTeam = Number(currentUser.team);
-      }
+    // チーム決定ルートはここだけ。
+    // teamAssignments に既存のチームがあれば必ずそれを使用し、
+    // リロード・再接続では絶対に再抽選しない。
+    runTransaction(teamRef, (current) => {
+      if (current && current.team >= 0 && current.team < 4) return current;
 
-      if (!Number.isInteger(assignedTeam) || assignedTeam < 0 || assignedTeam >= 4) {
-        const counts = [0, 0, 0, 0];
-        Object.values(allUsers || {}).forEach(u => {
-          const t = Number(u && u.team);
-          if (Number.isInteger(t) && t >= 0 && t < 4) counts[t]++;
-        });
-        const minVal = Math.min(...counts);
-        const candidates = counts
-          .map((count, index) => count === minVal ? index : -1)
-          .filter(index => index >= 0);
-        assignedTeam = candidates.length
-          ? candidates[Math.floor(Math.random() * candidates.length)]
-          : 0;
-      }
+      let counts = [0, 0, 0, 0];
+      Object.values(allUsers).forEach(u => {
+        if (u.team >= 0 && u.team < 4) counts[u.team]++;
+      });
+      let minVal = Math.min(...counts);
+      let candidateTeams = [];
+      counts.forEach((cnt, idx) => {
+        if (cnt === minVal) candidateTeams.push(idx);
+      });
+      const assignedTeam = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
+      return { team: assignedTeam };
+    }).then((result) => {
+      if (!myUserName || isSpectator || !result.committed) return;
 
+      const assignedTeam = result.snapshot.val().team;
       myTeamIndex = assignedTeam;
-      localStorage.setItem("expo_team", String(myTeamIndex));
+      localStorage.setItem("expo_team", myTeamIndex);
 
-      // ここが参加者登録の本体。Firebaseへ直接書き込む。
-      // onDisconnect の設定は登録後に行い、切断設定の失敗で登録処理が止まらないようにする。
-      await set(userRef, {
+      return set(userRef, {
         name: myUserName,
         team: myTeamIndex,
         lastActive: Date.now(),
         role: 'participant'
       });
-
-      try {
-        await onDisconnect(userRef).remove();
-      } catch (disconnectErr) {
-        console.warn('切断時の参加者削除設定をスキップしました。', disconnectErr);
-      }
-
-      // 書き込み成功後、Firebaseのusers監視を待たずに画面にも即反映。
-      allUsers[encodedName] = {
-        name: myUserName,
-        team: myTeamIndex,
-        lastActive: Date.now(),
-        role: 'participant'
-      };
-      rebuildTeamPlayers();
-      updateUI();
-      return true;
-    } catch (err) {
-      console.error('参加者登録に失敗しました。', err);
-      console.error('Firebase参加者登録エラー詳細:', err?.code, err?.message);
-      return false;
-    } finally {
-      isRegisteringUser = false;
-    }
+    }).catch(err => {
+      console.warn('参加者登録に失敗しました。', err);
+    });
   }
 
   function shuffleTeams() {
@@ -3363,37 +3332,18 @@
     });
   }
 
-  window.startGame = async function() {
-    if (isSpectator || !myUserName || gameState.gameStarted) return;
-    if (!window.dbRef) return;
+  window.startGame = function() {
+    if (isSpectator || !myUserName || Object.keys(allUsers).length === 0) return;
+    if (gameState.gameStarted) return;
 
-    // 参加者登録がFirebaseに反映される前に開始ボタンを押しても、
-    // 「参加者0人」と判定して開始できない状態にならないよう、ここで登録完了を待つ。
-    await registerUserToFirebase();
-
-    const { ref, get, runTransaction, db } = window.dbRef;
-    const userSnap = await get(ref(db, `users/${encodeURIComponent(myUserName)}`)).catch(() => null);
-    if (!userSnap || !userSnap.exists()) {
-      alert("参加者の登録に失敗しました。もう一度ゲームに参加してください。");
-      return;
-    }
-
-    const startResult = await runTransaction(ref(db, 'gameState'), current => {
-      if (current && current.gameStarted) return;
-      const next = current || {};
-      next.gameStarted = true;
-      next.currentTeamIndex = 0;
-      next.playerIndices = [0, 0, 0, 0];
-      next.isGameOver = false;
-      next.positions = Array.isArray(next.positions) && next.positions.length === 4 ? next.positions : [0, 0, 0, 0];
-      return next;
-    }).catch(() => null);
-
-    if (!startResult || !startResult.committed) return;
-
-    gameState = startResult.snapshot.val() || gameState;
     // 全員の画面で鳴る、万博らしいワクワクしたゲーム開始音。
     soundEffect.expoStart();
+
+    gameState.gameStarted = true;
+    gameState.currentTeamIndex = 0;
+    gameState.playerIndices = [0, 0, 0, 0];
+    gameState.isGameOver = false;
+    syncGameState();
     pushLog("🎲 ゲーム開始！赤チームからスタートします。");
     updateUI();
     scheduleCpuTurn();

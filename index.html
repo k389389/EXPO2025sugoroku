@@ -4448,13 +4448,9 @@
 
         const positions = Array.isArray(current.positions) ? [...current.positions] : [0,0,0,0];
         if (rank === 1) positions[eventTeamIndex] = forwardTarget;
-        // 4位のチームは、15マス目に止まったチームとは無関係に2マス戻る。
-        const storedRanking = Array.isArray(current.kmyakBattleRanking) ? current.kmyakBattleRanking : null;
-        const rank4TeamIndex = storedRanking && storedRanking.length >= 4
-          ? Number(storedRanking[3])
-          : Number(current.kmyakBattleRank4TeamIndex);
-        if (Number.isInteger(rank4TeamIndex) && rank4TeamIndex >= 0 && rank4TeamIndex < 4) {
-          positions[rank4TeamIndex] = Math.max(0, Number(positions[rank4TeamIndex] || 0) - 2);
+        // 4位の場合も、15マス目のイベントを発生させたチームだけ2マス戻る。
+        if (rank === 4) {
+          positions[eventTeamIndex] = Math.max(0, Number(positions[eventTeamIndex] || 0) - 2);
         }
 
         const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];

@@ -4408,7 +4408,10 @@
       // Firebaseの1回のトランザクションで確定する。
       // これにより、10人以上の端末から古いgameStateが戻ってきても
       // 結果表示の再発生や、同じチームでターンが止まることを防ぐ。
-      if (String(gameState.kmyakBattleEventId || "") !== eventId) return;
+      if (String(gameState.kmyakBattleEventId || "") !== eventId) {
+        await recoverStuckKmyakBattle(eventId);
+        return;
+      }
 
       const oldPos = Number(gameState.positions[eventTeamIndex] || 0);
       const goalIndex = totalTiles - 1;
@@ -4564,14 +4567,10 @@
       if (rank === 1) {
         positions[eventTeamIndex] = Math.min(goalIndex, currentPos + 2);
       }
-      // 4位のチームは、15マス目に止まったチームとは無関係に2マス戻る。
-      const storedRanking = Array.isArray(current.kmyakBattleRanking) ? current.kmyakBattleRanking : null;
-      const rank4TeamIndex = storedRanking && storedRanking.length >= 4
-        ? Number(storedRanking[3])
-        : Number(current.kmyakBattleRank4TeamIndex);
-      if (Number.isInteger(rank4TeamIndex) && rank4TeamIndex >= 0 && rank4TeamIndex < 4) {
-        positions[rank4TeamIndex] = Math.max(0, Number(positions[rank4TeamIndex] || 0) - 2);
-      }
+      // 4位の場合も、15マス目のイベントを発生させたチームだけ2マス戻る。
+        if (rank === 4) {
+          positions[eventTeamIndex] = Math.max(0, Number(positions[eventTeamIndex] || 0) - 2);
+        }
 
       const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];
       // 15マス目の4位は1回休みではないため、skipTurnsは変更しない。
@@ -4614,6 +4613,15 @@
           return true;
         }
       } catch (e) {}
+      if (gameState.activeKmyakBattle && gameState.kmyakBattlePhase === 'result' &&
+          String(gameState.kmyakBattleEventId || '') === targetEventId) {
+        if (kmyakResultRecoveryTimer) clearTimeout(kmyakResultRecoveryTimer);
+        kmyakResultRecoveryEventId = targetEventId;
+        kmyakResultRecoveryTimer = setTimeout(() => {
+          kmyakResultRecoveryTimer = null;
+          recoverStuckKmyakBattle(targetEventId);
+        }, 1500);
+      }
       return false;
     }
 
@@ -4624,8 +4632,7 @@
     );
     const rank = Number(before.kmyakBattleResultRank);
     const storedRanking = Array.isArray(before.kmyakBattleRanking) ? before.kmyakBattleRanking : null;
-    const rank4Index = storedRanking && storedRanking.length >= 4 ? Number(storedRanking[3]) : Number(before.kmyakBattleRank4TeamIndex);
-    const moveTeamIndex = rank === 4 ? rank4Index : eventTeamIndex;
+    const moveTeamIndex = eventTeamIndex;
     const oldPos = Number(before.positions?.[moveTeamIndex] || 0);
     const newPos = Number(after.positions?.[moveTeamIndex] || oldPos);
     if (rank === 1 && newPos > oldPos) {
@@ -4699,21 +4706,12 @@
       const owner = Number(gameState.kmyakBattleResultOwner);
       const rank = Number(gameState.kmyakBattleResultRank);
       let resultText = "";
-      const rank4Index = Array.isArray(gameState.kmyakBattleRanking) && gameState.kmyakBattleRanking.length >= 4
-        ? Number(gameState.kmyakBattleRanking[3])
-        : Number(gameState.kmyakBattleRank4TeamIndex);
       if (rank === 1) {
         resultText = `${teamNames[owner] || ""}：大混雑を抜け出すことに成功。2マス進む。`;
-        if (rank4Index !== owner && Number.isInteger(rank4Index) && rank4Index >= 0 && rank4Index < 4) {
-          resultText += `<br>${teamNames[rank4Index] || ""}：4位のため2マス戻る。`;
-        }
       } else if (rank === 4) {
         resultText = `${teamNames[owner] || ""}：4位のため2マス戻る。`;
       } else if (rank === 2 || rank === 3) {
         resultText = `${teamNames[owner] || ""}：${rank}位。そのままです。`;
-        if (rank4Index !== owner && Number.isInteger(rank4Index) && rank4Index >= 0 && rank4Index < 4) {
-          resultText += `<br>${teamNames[rank4Index] || ""}：4位のため2マス戻る。`;
-        }
       }
 
       overlay.innerHTML = `

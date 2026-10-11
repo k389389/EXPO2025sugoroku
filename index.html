@@ -4527,11 +4527,16 @@
 
     if (latestState) {
       const latestEventId = String(latestState.kmyakBattleEventId || '');
+      const latestStillHasThisResult =
+        latestEventId === localEventId &&
+        !!latestState.activeKmyakBattle &&
+        latestState.kmyakBattlePhase === 'result';
 
-      // 別端末がすでにこのイベントを正常終了させていた場合は、
-      // その最新状態をこの端末へ反映して復旧完了とする。
-      if (latestEventId === localEventId &&
-          (!latestState.activeKmyakBattle || latestState.kmyakBattlePhase === 'idle')) {
+      // Firebaseの最新状態でこのイベントが終了済み、または別イベントへ進んでいる場合、
+      // eventIdが消去・更新されていても最新状態を正として端末を同期する。
+      // この場合は別端末がすでに次のターンへ進めている可能性があるため、
+      // 「代理で振る」から追加のサイコロを振らないよう、'synced'を返す。
+      if (!latestStillHasThisResult) {
         gameState = latestState;
         if (kmyakResultRecoveryTimer) {
           clearTimeout(kmyakResultRecoveryTimer);
@@ -4539,11 +4544,12 @@
         }
         kmyakResultRecoveryEventId = null;
         removeKmyakBattleOverlay();
+        if (gameState.activeKmyakBattle) renderKmyakBattleOverlay();
         updateBoardImage();
         updateUI();
         isMoving = false;
         scheduleCameraForNextTeam(50);
-        return true;
+        return 'synced';
       }
     }
 
@@ -4622,7 +4628,7 @@
           updateUI();
           isMoving = false;
           scheduleCameraForNextTeam(50);
-          return true;
+          return 'synced';
         }
       } catch (e) {}
       // 再試行タイマーは scheduleKmyakResultRecovery に一本化する。
@@ -6651,14 +6657,21 @@
 
       // 押した端末のローカル状態ではなくFirebaseの最新状態を基準に復旧する。
       // 別端末がすでに復旧済みでも、ここで最新状態へ追従できる。
-      const recovered = await recoverStuckKmyakBattle(gameState.kmyakBattleEventId);
+      const stuckEventId = String(gameState.kmyakBattleEventId || '');
+      const recovered = await recoverStuckKmyakBattle(stuckEventId);
       if (!recovered) {
-        alert('まだ復旧処理中です。少し待ってからもう一度「代理で振る」を押してください。');
+        alert('復旧できませんでした。通信状態を確認して、数秒後にもう一度お試しください。');
         return;
       }
 
-      // 別端末がすでに次のターンへ進めていた場合は、
-      // 現在のFirebase状態を優先し、同じターンを二重に進めない。
+      // 最新状態を読み直した結果、別端末ですでに結果確定・ターン進行済みなら、
+      // 余分なサイコロを振らず同期だけで終了する。
+      if (recovered === 'synced') {
+        alert('最新のゲーム状態に同期しました。別端末ですでに処理が進んでいるため、サイコロは追加で振っていません。');
+        return;
+      }
+
+      // この端末が復旧トランザクションを確定した場合のみ、次のターンを代理で進める。
       await executeDiceRoll({ proxy: true, recovery: true });
       return;
     }

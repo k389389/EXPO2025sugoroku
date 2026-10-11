@@ -4690,6 +4690,83 @@
     }, 6000);
   }
 
+
+  // 15マス目の結果表示が、この端末だけ古いまま残るケースへの端末側同期監視。
+  // FirebaseのonValue通知が一時的に届かない／復帰が遅れる端末でも、
+  // 結果オーバーレイが表示中のときだけ最新状態を読み直して表示を合わせる。
+  let kmyakOverlaySyncInProgress = false;
+  async function syncStaleKmyakBattleOverlay() {
+    const board = document.getElementById('board');
+    const overlay = board && board.querySelector('.kmyak-battle-overlay');
+    if (!overlay || kmyakOverlaySyncInProgress || !window.dbRef) return;
+
+    kmyakOverlaySyncInProgress = true;
+    try {
+      const { ref, get, db } = window.dbRef;
+      const snapshot = await get(ref(db, 'gameState'));
+      const latest = snapshot.val();
+      if (!latest) return;
+
+      const localEventId = String(gameState.kmyakBattleEventId || '');
+      const latestEventId = String(latest.kmyakBattleEventId || '');
+      const localStillShowingResult =
+        !!gameState.activeKmyakBattle && gameState.kmyakBattlePhase === 'result';
+      const latestHasNoThisResult =
+        !latest.activeKmyakBattle ||
+        latest.kmyakBattlePhase === 'idle' ||
+        latestEventId !== localEventId;
+
+      // 最新の共有状態ではこの結果が終わっているのに、
+      // この端末だけ結果画面が残っている場合に限って画面を同期する。
+      if (localStillShowingResult && latestHasNoThisResult) {
+        gameState = latest;
+        if (kmyakResultRecoveryTimer) {
+          clearTimeout(kmyakResultRecoveryTimer);
+          kmyakResultRecoveryTimer = null;
+        }
+        kmyakResultRecoveryEventId = null;
+        removeKmyakBattleOverlay();
+        updateBoardImage();
+        updateUI();
+        isMoving = false;
+        scheduleCameraForNextTeam(50);
+      } else if (localStillShowingResult && latest.activeKmyakBattle &&
+                 latest.kmyakBattlePhase !== 'result') {
+        // 同じ端末の結果表示だけ古く、共有状態は次の段階へ進んでいる場合。
+        gameState = latest;
+        removeKmyakBattleOverlay();
+        renderKmyakBattleOverlay();
+        updateBoardImage();
+        updateUI();
+      } else if (latestEventId !== localEventId && latest.activeKmyakBattle) {
+        // 別の15マス目イベントがすでに始まっていた場合、古い結果表示を残さない。
+        gameState = latest;
+        removeKmyakBattleOverlay();
+        renderKmyakBattleOverlay();
+        updateBoardImage();
+        updateUI();
+      }
+    } catch (e) {
+      console.warn('15マス目の画面同期を再試行します:', e);
+    } finally {
+      kmyakOverlaySyncInProgress = false;
+    }
+  }
+
+  // 結果表示が残っている間だけ2.5秒ごとに確認。通常プレイ中は通信しない。
+  setInterval(() => {
+    const board = document.getElementById('board');
+    if (board && board.querySelector('.kmyak-battle-overlay')) {
+      syncStaleKmyakBattleOverlay();
+    }
+  }, 2500);
+
+  // Safariなどでタブ復帰時に通知処理が遅れた場合も、すぐ最新状態を確認する。
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) syncStaleKmyakBattleOverlay();
+  });
+  window.addEventListener('focus', syncStaleKmyakBattleOverlay);
+
   function renderKmyakBattleOverlay() {
     const board = document.getElementById('board');
     let overlay = board.querySelector('.kmyak-battle-overlay');

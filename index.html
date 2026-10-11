@@ -4663,9 +4663,25 @@
     if (kmyakResultRecoveryTimer) clearTimeout(kmyakResultRecoveryTimer);
     kmyakResultRecoveryEventId = eventId;
     // 通常の結果処理を優先し、それでも残っている場合だけ救済する。
-    kmyakResultRecoveryTimer = setTimeout(() => {
+    // 復旧処理自体が通信競合などで失敗した場合も、1回で諦めず再試行する。
+    kmyakResultRecoveryTimer = setTimeout(async () => {
       kmyakResultRecoveryTimer = null;
-      recoverStuckKmyakBattle(eventId);
+      try {
+        await recoverStuckKmyakBattle(eventId);
+      } catch (e) {
+        console.warn('15マス目イベントの復旧を再試行します:', e);
+      }
+      // 同じイベントの結果画面がまだ残っていれば、数秒後に再度復旧を試す。
+      if (gameState.activeKmyakBattle &&
+          gameState.kmyakBattlePhase === 'result' &&
+          String(gameState.kmyakBattleEventId || '') === eventId) {
+        kmyakResultRecoveryTimer = setTimeout(() => {
+          kmyakResultRecoveryTimer = null;
+          scheduleKmyakResultRecovery();
+        }, 2000);
+      } else if (kmyakResultRecoveryEventId === eventId) {
+        kmyakResultRecoveryEventId = null;
+      }
     }, 6000);
   }
 

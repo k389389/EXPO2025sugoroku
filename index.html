@@ -4495,7 +4495,19 @@
     }, 4500);
   }
 
+  // 復旧処理が複数のタイマーや端末操作から同時に走らないよう、1件ずつ実行する。
+  let kmyakRecoveryPromise = null;
   async function recoverStuckKmyakBattle(eventId = null) {
+    if (kmyakRecoveryPromise) return kmyakRecoveryPromise;
+    kmyakRecoveryPromise = recoverStuckKmyakBattleInternal(eventId);
+    try {
+      return await kmyakRecoveryPromise;
+    } finally {
+      kmyakRecoveryPromise = null;
+    }
+  }
+
+  async function recoverStuckKmyakBattleInternal(eventId = null) {
     if (!window.dbRef) return false;
     const { ref, runTransaction, get, db } = window.dbRef;
     const localEventId = String(eventId || gameState.kmyakBattleEventId || '');
@@ -4613,15 +4625,8 @@
           return true;
         }
       } catch (e) {}
-      if (gameState.activeKmyakBattle && gameState.kmyakBattlePhase === 'result' &&
-          String(gameState.kmyakBattleEventId || '') === targetEventId) {
-        if (kmyakResultRecoveryTimer) clearTimeout(kmyakResultRecoveryTimer);
-        kmyakResultRecoveryEventId = targetEventId;
-        kmyakResultRecoveryTimer = setTimeout(() => {
-          kmyakResultRecoveryTimer = null;
-          recoverStuckKmyakBattle(targetEventId);
-        }, 1500);
-      }
+      // 再試行タイマーは scheduleKmyakResultRecovery に一本化する。
+      // ここでもタイマーを作ると複数の復旧処理が競合するため、ここでは作らない。
       return false;
     }
 
@@ -4671,7 +4676,7 @@
       } catch (e) {
         console.warn('15マス目イベントの復旧を再試行します:', e);
       }
-      // 同じイベントの結果画面がまだ残っていれば、数秒後に再度復旧を試す。
+      // 同じイベントの結果画面が残っている間だけ、一本化したタイマーで再試行する。
       if (gameState.activeKmyakBattle &&
           gameState.kmyakBattlePhase === 'result' &&
           String(gameState.kmyakBattleEventId || '') === eventId) {

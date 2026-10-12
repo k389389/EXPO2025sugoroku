@@ -4350,56 +4350,80 @@
     });
   }
 
+  // 15マス目の結果確定担当が途中で止まった場合に備えた再試行。
+  // 同じ端末ではイベントごとにタイマーを1本だけ持つ。
+  let kmyakResolveRetryTimer = null;
+  let kmyakResolveRetryEventId = null;
+  function scheduleKmyakResolveRetry(eventId, delay = 2500) {
+    if (!eventId) return;
+    if (kmyakResolveRetryTimer && kmyakResolveRetryEventId === eventId) return;
+    if (kmyakResolveRetryTimer) clearTimeout(kmyakResolveRetryTimer);
+    kmyakResolveRetryEventId = eventId;
+    kmyakResolveRetryTimer = setTimeout(() => {
+      kmyakResolveRetryTimer = null;
+      if (kmyakResolveRetryEventId === eventId) kmyakResolveRetryEventId = null;
+      if (gameState.activeKmyakBattle &&
+          gameState.kmyakBattlePhase === 'battle' &&
+          String(gameState.kmyakBattleEventId || '') === eventId) {
+        resolveKmyakBattleHost();
+      }
+    }, delay);
+  }
+
   async function resolveKmyakBattleHost() {
     cpuKmyakTapTimers.forEach(t => clearInterval(t));
     cpuKmyakTapTimers = [];
 
     const eventId = String(gameState.kmyakBattleEventId || "");
-    if (!eventId) return;
+    if (!eventId || !window.dbRef) return;
 
-    // 以前は別パスの「解決権」を先に取った端末だけが結果処理を担当していました。
-    // その端末が途中で通信停止すると、他端末が結果処理を引き継げずフリーズします。
-    // 今回はgameState自体のtransactionで「battle→result」と順位確定を一括実行し、
-    // 1端末が途中停止しても他端末の自動復旧処理が引き継げるようにします。
+    // 結果確定の担当が途中で止まると、以前の永久ロックが残って全端末が停止していた。
+    // 12秒以上古いclaimは期限切れとして引き継ぎ可能にする。
+    // 結果確定後はphaseがbattleではなくなるため、二重に結果処理は行われない。
     const { ref, runTransaction, db } = window.dbRef;
-    const memberCounts = [0, 1, 2, 3].map(i =>
-      Math.max(1, teamPlayers[i].filter(name => !name.includes("募集中")).length)
-    );
-    const claim = await runTransaction(ref(db, 'gameState'), current => {
-      if (!current || String(current.kmyakBattleEventId || '') !== eventId ||
-          !current.activeKmyakBattle || current.kmyakBattlePhase !== 'battle') return;
-
-      const eventTeamIndex = Number(current.kmyakBattleTeamIndex);
-      if (!Number.isInteger(eventTeamIndex) || eventTeamIndex < 0 || eventTeamIndex > 3) return;
-
-      const taps = Array.isArray(current.kmyakTaps) ? current.kmyakTaps : [0, 0, 0, 0];
-      const averages = [0, 1, 2, 3].map(i => Number(taps[i] || 0) / memberCounts[i]);
-      const ranking = [0, 1, 2, 3].sort((a, b) => {
-        if (averages[b] !== averages[a]) return averages[b] - averages[a];
-        return a - b;
-      });
-      const rank = ranking.indexOf(eventTeamIndex) + 1;
-
-      return {
-        ...current,
-        kmyakBattlePhase: 'result',
-        kmyakBattleResultRank: rank,
-        kmyakBattleResultOwner: eventTeamIndex,
-        kmyakBattleRank4TeamIndex: ranking[3],
-        kmyakBattleRanking: [...ranking],
-        kmyakBattleResolved: true
-      };
+    const now = Date.now();
+    const claim = await runTransaction(ref(db, `gameState/kmyakBattleResolveClaims/${eventId}`), current => {
+      const claimedAt = Number(current && current.resolvedAt || 0);
+      if (current && now - claimedAt < 12000) return;
+      return { resolvedAt: now };
     }).catch(e => {
-      console.warn('15マス目の結果確定に失敗しました。別端末の復旧処理へ引き継ぎます:', e);
+      console.warn('15マス目の結果確定担当を取得できませんでした。再試行します:', e);
       return null;
     });
-    if (!claim || !claim.committed) return;
+    if (!claim || !claim.committed) {
+      scheduleKmyakResolveRetry(eventId, 2500);
+      return;
+    }
+    // 取得した端末自体が処理中に止まっても、他端末が期限切れ後に引き継げる。
+    scheduleKmyakResolveRetry(eventId, 13000);
 
-    gameState = claim.snapshot.val() || gameState;
-    const eventTeamIndex = Number(gameState.kmyakBattleResultOwner ?? gameState.kmyakBattleTeamIndex);
-    const rank = Number(gameState.kmyakBattleResultRank);
-    if (!Number.isInteger(eventTeamIndex) || eventTeamIndex < 0 || eventTeamIndex > 3 ||
-        ![1, 2, 3, 4].includes(rank)) return;
+    const eventTeamIndex = Number(gameState.kmyakBattleTeamIndex);
+    if (!Number.isInteger(eventTeamIndex) || eventTeamIndex < 0 || eventTeamIndex > 3) return;
+
+    let averages = [0, 0, 0, 0];
+    for (let i = 0; i < 4; i++) {
+      const totalTaps = Number(gameState.kmyakTaps?.[i] || 0);
+      const memberCount = Math.max(1, teamPlayers[i].filter(name => !name.includes("募集中")).length);
+      averages[i] = totalTaps / memberCount;
+    }
+
+    // 連打数（1人あたり平均）を順位化。完全同率の場合はチーム番号で決める。
+    const ranking = [0, 1, 2, 3].sort((a, b) => {
+      if (averages[b] !== averages[a]) return averages[b] - averages[a];
+      return a - b;
+    });
+    const rank = ranking.indexOf(eventTeamIndex) + 1;
+
+    gameState.kmyakBattlePhase = "result";
+    gameState.kmyakBattleResultRank = rank;
+    gameState.kmyakBattleResultOwner = eventTeamIndex;
+    gameState.kmyakBattleRank4TeamIndex = ranking[3];
+    gameState.kmyakBattleRanking = [...ranking];
+    gameState.kmyakBattleResolved = true;
+    syncGameState();
+    if (kmyakResolveRetryTimer) clearTimeout(kmyakResolveRetryTimer);
+    kmyakResolveRetryTimer = null;
+    kmyakResolveRetryEventId = null;
 
     const teamName = teamNames[eventTeamIndex];
     if (rank === 1) {
@@ -4505,35 +4529,14 @@
   }
 
   // 復旧処理が複数のタイマーや端末操作から同時に走らないよう、1件ずつ実行する。
-  // Firebaseのget/runTransactionが端末側で応答待ちのままになる場合に備え、
-  // 待ち続けて以後の復旧操作まで塞がないよう、1回の復旧に上限時間を設ける。
   let kmyakRecoveryPromise = null;
   async function recoverStuckKmyakBattle(eventId = null) {
     if (kmyakRecoveryPromise) return kmyakRecoveryPromise;
-
-    let timeoutId = null;
-    const work = Promise.resolve().then(() => recoverStuckKmyakBattleInternal(eventId));
-    const boundedWork = Promise.race([
-      work,
-      new Promise(resolve => {
-        timeoutId = setTimeout(() => resolve('timeout'), 8000);
-      })
-    ]);
-    kmyakRecoveryPromise = boundedWork;
+    kmyakRecoveryPromise = recoverStuckKmyakBattleInternal(eventId);
     try {
-      const result = await boundedWork;
-      if (result === 'timeout') {
-        console.warn('15マス目の復旧処理が8秒以内に完了しませんでした。再試行します。');
-        return false;
-      }
-      return result;
-    } catch (e) {
-      console.warn('15マス目の復旧処理でエラーが発生しました:', e);
-      return false;
+      return await kmyakRecoveryPromise;
     } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-      // タイムアウトした古い処理が後から終了しても、新しい処理のロックを消さない。
-      if (kmyakRecoveryPromise === boundedWork) kmyakRecoveryPromise = null;
+      kmyakRecoveryPromise = null;
     }
   }
 
@@ -4645,11 +4648,8 @@
       try {
         const latestSnapshot = await get(ref(db, 'gameState'));
         const afterLatest = latestSnapshot.val() || null;
-        if (afterLatest && (
-            String(afterLatest.kmyakBattleEventId || '') !== targetEventId ||
-            !afterLatest.activeKmyakBattle ||
-            afterLatest.kmyakBattlePhase !== 'result')) {
-          // 別端末が終了させた場合や、次のイベントへ進んだ場合も最新状態へ同期する。
+        if (afterLatest && String(afterLatest.kmyakBattleEventId || '') === targetEventId &&
+            (!afterLatest.activeKmyakBattle || afterLatest.kmyakBattlePhase === 'idle')) {
           gameState = afterLatest;
           if (kmyakResultRecoveryTimer) {
             clearTimeout(kmyakResultRecoveryTimer);
@@ -4657,7 +4657,6 @@
           }
           kmyakResultRecoveryEventId = null;
           removeKmyakBattleOverlay();
-          if (gameState.activeKmyakBattle) renderKmyakBattleOverlay();
           updateBoardImage();
           updateUI();
           isMoving = false;

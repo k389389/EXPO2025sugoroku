@@ -4754,10 +4754,14 @@
         !latest.activeKmyakBattle ||
         latest.kmyakBattlePhase === 'idle' ||
         latestEventId !== localEventId;
+      const latestStillHasThisResult =
+        !!latest.activeKmyakBattle && latest.kmyakBattlePhase === 'result' &&
+        latestEventId === localEventId;
 
-      // 最新の共有状態ではこの結果が終わっているのに、
-      // この端末だけ結果画面が残っている場合に限って画面を同期する。
-      if (localStillShowingResult && latestHasNoThisResult) {
+      // DOM上に結果画面が残っているなら、ローカルgameStateがすでに更新済みでも
+      // Firebaseの最新状態を正として盤面・手番・サイコロ操作を同期し直す。
+      // 「ローカルもresultであること」を条件にすると、DOMだけ残った端末を復旧できない。
+      if (latestHasNoThisResult) {
         gameState = latest;
         if (kmyakResultRecoveryTimer) {
           clearTimeout(kmyakResultRecoveryTimer);
@@ -4769,6 +4773,18 @@
         updateUI();
         isMoving = false;
         scheduleCameraForNextTeam(50);
+      } else if (latestStillHasThisResult &&
+                 (!localStillShowingResult ||
+                  (kmyakOverlayStaleSince && Date.now() - kmyakOverlayStaleSince >= 8000))) {
+        // Firebase側にもresultが残っている場合は、表示だけ合わせて終わらせず、
+        // 15マス目専用の冪等な復旧transactionを再実行する。
+        gameState = latest;
+        renderKmyakBattleOverlay();
+        updateBoardImage();
+        updateUI();
+        if (kmyakOverlayStaleSince && Date.now() - kmyakOverlayStaleSince >= 8000) {
+          await recoverStuckKmyakBattle(latestEventId);
+        }
       } else if (localStillShowingResult && latest.activeKmyakBattle &&
                  latest.kmyakBattlePhase !== 'result') {
         // 同じ端末の結果表示だけ古く、共有状態は次の段階へ進んでいる場合。

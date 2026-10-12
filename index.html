@@ -4793,10 +4793,58 @@
   }
 
   // 結果表示が残っている間だけ2.5秒ごとに確認。通常プレイ中は通信しない。
-  setInterval(() => {
+  // 同期処理でも画面が直らない場合に備え、共有状態ではイベントが終了済みなのに
+  // この端末だけ結果画面が15秒以上残る場合に限り、自動リロードを最後の救済策として使う。
+  let kmyakOverlayStaleSince = 0;
+  let kmyakAutoReloadCheckInProgress = false;
+  setInterval(async () => {
     const board = document.getElementById('board');
-    if (board && board.querySelector('.kmyak-battle-overlay')) {
-      syncStaleKmyakBattleOverlay();
+    const overlay = board && board.querySelector('.kmyak-battle-overlay');
+    if (!overlay) {
+      kmyakOverlayStaleSince = 0;
+      return;
+    }
+
+    syncStaleKmyakBattleOverlay();
+
+    const looksLikeResult = gameState.kmyakBattlePhase === 'result' ||
+      /ゲーム結果|結果/.test(overlay.innerText || '');
+    if (!looksLikeResult) {
+      kmyakOverlayStaleSince = 0;
+      return;
+    }
+    if (!kmyakOverlayStaleSince) kmyakOverlayStaleSince = Date.now();
+    if (Date.now() - kmyakOverlayStaleSince < 15000 ||
+        kmyakAutoReloadCheckInProgress || !window.dbRef) return;
+
+    kmyakAutoReloadCheckInProgress = true;
+    try {
+      const { ref, get, db } = window.dbRef;
+      const snapshot = await get(ref(db, 'gameState'));
+      const latest = snapshot.val();
+      if (!latest) return;
+
+      const localEventId = String(gameState.kmyakBattleEventId || '');
+      const latestEventId = String(latest.kmyakBattleEventId || '');
+      const latestHasThisResult = !!latest.activeKmyakBattle &&
+        latest.kmyakBattlePhase === 'result' && latestEventId === localEventId;
+
+      // Firebaseでも結果処理中ならリロードしない。共有状態が先へ進んでいるのに
+      // この端末の結果画面だけ残っている場合のみ、同一イベントにつき1回リロードする。
+      if (!latestHasThisResult) {
+        const reloadKey = 'kmyakResultAutoReload:' + encodeURIComponent(localEventId || 'unknown');
+        let alreadyReloaded = false;
+        try { alreadyReloaded = sessionStorage.getItem(reloadKey) === '1'; } catch (e) {}
+        if (!alreadyReloaded) {
+          try { sessionStorage.setItem(reloadKey, '1'); } catch (e) {}
+          console.warn('15マス目の結果画面が共有状態と一致しないため、自動リロードします。');
+          window.location.reload();
+        }
+      }
+    } catch (e) {
+      console.warn('15マス目の自動リロード前の状態確認に失敗しました:', e);
+    } finally {
+      kmyakAutoReloadCheckInProgress = false;
     }
   }, 2500);
 

@@ -4425,13 +4425,32 @@
     });
     const rank = ranking.indexOf(eventTeamIndex) + 1;
 
-    gameState.kmyakBattlePhase = "result";
-    gameState.kmyakBattleResultRank = rank;
-    gameState.kmyakBattleResultOwner = eventTeamIndex;
-    gameState.kmyakBattleRank4TeamIndex = ranking[3];
-    gameState.kmyakBattleRanking = [...ranking];
-    gameState.kmyakBattleResolved = true;
-    syncGameState();
+    // 結果表示への切り替えは gameState 全体の set() で上書きせず、
+    // イベントIDとphaseを確認するトランザクションで必要な項目だけ確定する。
+    // 古い端末のgameStateが最新の手番・盤面を上書きする競合を避ける。
+    const resultTx = await runTransaction(ref(db, 'gameState'), current => {
+      if (!current) return;
+      if (String(current.kmyakBattleEventId || '') !== eventId) return;
+      if (!current.activeKmyakBattle || current.kmyakBattlePhase !== 'battle') return;
+      return {
+        ...current,
+        kmyakBattlePhase: 'result',
+        kmyakBattleResultRank: rank,
+        kmyakBattleResultOwner: eventTeamIndex,
+        kmyakBattleRank4TeamIndex: ranking[3],
+        kmyakBattleRanking: [...ranking],
+        kmyakBattleResolved: true
+      };
+    }).catch(e => {
+      console.warn('15マス目の結果保存に失敗しました。再試行します:', e);
+      return null;
+    });
+    if (!resultTx || !resultTx.committed) {
+      scheduleKmyakResolveRetry(eventId, 2500);
+      scheduleKmyakResultRecovery();
+      return;
+    }
+    gameState = resultTx.snapshot.val() || gameState;
     if (kmyakResolveRetryTimer) clearTimeout(kmyakResolveRetryTimer);
     kmyakResolveRetryTimer = null;
     kmyakResolveRetryEventId = null;

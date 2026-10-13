@@ -833,7 +833,7 @@
       transform: scale(1.1);
     }
 
-    .chat-messages { height: 45px; padding: 3px 6px; overflow-y: auto; font-size: 10px; display: flex; flex-direction: column; gap: 2px; background: #fafafa; order: 3; }
+    .chat-messages { height: 90px; padding: 3px 6px; overflow-y: auto; font-size: 10px; display: flex; flex-direction: column; gap: 2px; background: #fafafa; order: 3; }
     @media (min-width: 768px) { .chat-messages { height: 75px; } }
     /*
      * 実況ログはサイドパネル内のflex要素に押しつぶされないようにする。
@@ -2160,6 +2160,8 @@
 
   // 🌱 ミャクニョッキ
   let myakuNyokkiCpuTimers = [];
+  let myakuNyokkiCpuScheduledKeys = new Set();
+  let myakuNyokkiCpuEventStartedAt = null;
   let myakuNyokkiNoPressTimer = null;
 
   function getMyakuNyokkiParticipants() {
@@ -2244,18 +2246,28 @@
     if (!isCpuController() || !gameState.activeMyakuNyokki || !gameState.myakuNyokki) return;
     if (gameState.myakuNyokki.status !== 'active') return;
 
-    myakuNyokkiCpuTimers.forEach(t => clearTimeout(t));
-    myakuNyokkiCpuTimers = [];
-
     const startedAt = Number(gameState.myakuNyokki.startedAt || Date.now());
+    // 同じイベントの同期更新のたびにCPUタイマーを作り直すと、
+    // タイマーが短時間に集中してCPU同士が連続で押すことがあるため、
+    // イベント開始時刻が変わったときだけ予約状態をリセットする。
+    if (myakuNyokkiCpuEventStartedAt !== startedAt) {
+      myakuNyokkiCpuTimers.forEach(t => clearTimeout(t));
+      myakuNyokkiCpuTimers = [];
+      myakuNyokkiCpuScheduledKeys = new Set();
+      myakuNyokkiCpuEventStartedAt = startedAt;
+    }
+
     const elapsed = Date.now() - startedAt;
+    const cpuEntries = Object.entries(gameState.myakuNyokki.participants || {})
+      .filter(([, p]) => p.type === 'cpu' && !p.pressed);
 
-    Object.entries(gameState.myakuNyokki.participants || {}).forEach(([key, p]) => {
-      if (p.type !== 'cpu' || p.pressed) return;
+    cpuEntries.forEach(([key], index) => {
+      if (myakuNyokkiCpuScheduledKeys.has(key)) return;
+      myakuNyokkiCpuScheduledKeys.add(key);
 
-      // イベント開始から0.9～3.2秒の間に押す。
-      // 既に開始から時間が経っている場合は残り時間だけ待つ。
-      const targetDelay = 900 + Math.floor(Math.random() * 2300);
+      // CPU同士の誤った連続衝突を避け、プレイヤーが押す時間も確保する。
+      // 複数CPUはイベント開始から順番に押す。
+      const targetDelay = Math.min(4200, 1300 + index * 900);
       const delay = Math.max(100, targetDelay - Math.max(0, elapsed));
       myakuNyokkiCpuTimers.push(setTimeout(() => pressMyakuNyokkiForCpu(key), delay));
     });
@@ -2419,6 +2431,8 @@
     if (ny.resultApplied) {
       myakuNyokkiCpuTimers.forEach(t => clearTimeout(t));
       myakuNyokkiCpuTimers = [];
+      myakuNyokkiCpuScheduledKeys = new Set();
+      myakuNyokkiCpuEventStartedAt = null;
       if (myakuNyokkiNoPressTimer) {
         clearTimeout(myakuNyokkiNoPressTimer);
         myakuNyokkiNoPressTimer = null;
@@ -2461,6 +2475,8 @@
 
     myakuNyokkiCpuTimers.forEach(t => clearTimeout(t));
     myakuNyokkiCpuTimers = [];
+    myakuNyokkiCpuScheduledKeys = new Set();
+    myakuNyokkiCpuEventStartedAt = null;
     if (myakuNyokkiNoPressTimer) {
       clearTimeout(myakuNyokkiNoPressTimer);
       myakuNyokkiNoPressTimer = null;
@@ -4425,7 +4441,7 @@
     const fourthPlaceTeam = ranking[3];
     if (rank === 1) soundEffect.goal();
     else if (rank === 4) soundEffect.wrong();
-    pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：1位は${teamNames[firstPlaceTeam]}！2マス進みます。4位は${teamNames[fourthPlaceTeam]}。1マス戻ります。${teamName}は${rank}位です。`);
+    pushLog(`🏃‍♂️ 大混雑脱出連打ゲーム結果：1位は${teamNames[firstPlaceTeam]}！イベントを発生させた${teamName}が1位の場合のみ2マス進みます。4位は${teamNames[fourthPlaceTeam]}。${teamName}は${rank}位です。`);
 
     setTimeout(async () => {
       // 結果処理は「イベント終了＋位置更新＋次チームへの交代」を
@@ -4438,23 +4454,16 @@
       }
 
       const goalIndex = totalTiles - 1;
-      const storedRanking = Array.isArray(gameState.kmyakBattleRanking) ? gameState.kmyakBattleRanking : null;
-      const finalRanking = storedRanking && storedRanking.length >= 4 ? storedRanking : ranking;
-      const firstPlaceTeamIndex = Number(finalRanking[0]);
-      const fourthPlaceTeamIndex = Number(finalRanking[3]);
-      const firstOldPos = Number(gameState.positions[firstPlaceTeamIndex] || 0);
-      const fourthOldPos = Number(gameState.positions[fourthPlaceTeamIndex] || 0);
-      const forwardTarget = Math.min(goalIndex, firstOldPos + 2);
-      const backTarget = Math.max(0, fourthOldPos - 1);
+      const resultRank = Number(gameState.kmyakBattleResultRank);
+      const eventTeamIndex = Number(gameState.kmyakBattleResultOwner ?? gameState.kmyakBattleTeamIndex);
+      const eventTeamOldPos = Number(gameState.positions[eventTeamIndex] || 0);
+      const eventTeamForwardTarget = Math.min(goalIndex, eventTeamOldPos + 2);
       const { ref, runTransaction, db } = window.dbRef;
 
-      // 1位チームは2マス進み、4位チームは1マス戻る。
-      // 移動は終了トランザクションで確定し、重複適用を防ぐ。
-      if (forwardTarget > firstOldPos) {
-        publishSharedMoveEvent(firstPlaceTeamIndex, firstOldPos, forwardTarget, false);
-      }
-      if (backTarget < fourthOldPos) {
-        publishSharedMoveEvent(fourthPlaceTeamIndex, fourthOldPos, backTarget, true);
+      // 15マス目に止まってイベントを発生させたチームだけが、1位の場合に2マス進む。
+      // 4位の後退処理は行わない。
+      if (resultRank === 1 && eventTeamForwardTarget > eventTeamOldPos) {
+        publishSharedMoveEvent(eventTeamIndex, eventTeamOldPos, eventTeamForwardTarget, false);
       }
 
       const finalize = await runTransaction(ref(db, 'gameState'), current => {
@@ -4472,11 +4481,13 @@
         }
 
         const positions = Array.isArray(current.positions) ? [...current.positions] : [0,0,0,0];
-        // 1位チームは2マス前進、4位チームは1マス後退（イベントを起こしたチームに限定しない）。
-        const currentFirstOldPos = Number(positions[firstPlaceTeamIndex] || 0);
-        const currentFourthOldPos = Number(positions[fourthPlaceTeamIndex] || 0);
-        positions[firstPlaceTeamIndex] = Math.min(goalIndex, currentFirstOldPos + 2);
-        positions[fourthPlaceTeamIndex] = Math.max(0, currentFourthOldPos - 1);
+        // イベントを発生させたチームだけ、1位の場合に2マス進む。4位の後退は行わない。
+        const eventTeamIndex = Number(current.kmyakBattleResultOwner ?? current.kmyakBattleTeamIndex);
+        const eventTeamRank = Number(current.kmyakBattleResultRank);
+        if (eventTeamRank === 1 && Number.isInteger(eventTeamIndex) && eventTeamIndex >= 0 && eventTeamIndex < 4) {
+          const eventTeamOldPos = Number(positions[eventTeamIndex] || 0);
+          positions[eventTeamIndex] = Math.min(goalIndex, eventTeamOldPos + 2);
+        }
 
         const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];
         // 15マス目の4位は「1回休み」ではなく2マス戻る。
@@ -4607,10 +4618,7 @@
       if (rank === 1) {
         positions[eventTeamIndex] = Math.min(goalIndex, currentPos + 2);
       }
-      // 4位の場合も、15マス目のイベントを発生させたチームだけ2マス戻る。
-        if (rank === 4) {
-          positions[eventTeamIndex] = Math.max(0, Number(positions[eventTeamIndex] || 0) - 2);
-        }
+      // 4位の場合は移動しない。
 
       const skipTurns = Array.isArray(current.skipTurns) ? [...current.skipTurns] : [false,false,false,false];
       // 15マス目の4位は1回休みではないため、skipTurnsは変更しない。
@@ -4670,8 +4678,6 @@
     const newPos = Number(after.positions?.[moveTeamIndex] || oldPos);
     if (rank === 1 && newPos > oldPos) {
       publishSharedMoveEvent(moveTeamIndex, oldPos, newPos, false);
-    } else if (rank === 4 && newPos < oldPos) {
-      publishSharedMoveEvent(moveTeamIndex, oldPos, newPos, true);
     }
 
     gameState = after;

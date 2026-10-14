@@ -4258,6 +4258,7 @@
         kmyakBattlePhase: 'countdown',
         kmyakBattleCountdown: 3,
         kmyakBattleTimer: 5,
+        kmyakBattleStartedAt: 0,
         kmyakTaps: [0, 0, 0, 0]
       };
     }).catch(() => null);
@@ -4293,6 +4294,9 @@
               !current.activeKmyakBattle || current.kmyakBattlePhase !== 'countdown') return;
           current.kmyakBattlePhase = 'battle';
           current.kmyakBattleTimer = 5;
+          // 連打開始時刻を共有し、開始端末のタイマーが停止しても
+          // 別端末が終了判定を引き継げるようにする。
+          current.kmyakBattleStartedAt = Date.now();
           return current;
         }).then(result => {
           if (!result || !result.committed) return;
@@ -4385,8 +4389,21 @@
     cpuKmyakTapTimers.forEach(t => clearInterval(t));
     cpuKmyakTapTimers = [];
 
+    if (!window.dbRef) return;
+    // 順位計算の前にFirebaseの最新集計を取得する。開始端末のローカル値が
+    // 古いままでも、別端末が正しい連打数で結果確定を引き継げる。
+    try {
+      const { ref, get, db } = window.dbRef;
+      const latestSnapshot = await get(ref(db, 'gameState'));
+      const latestState = latestSnapshot.val();
+      if (latestState) gameState = latestState;
+    } catch (e) {
+      console.warn('15マス目の最新状態取得に失敗しました:', e);
+      scheduleKmyakResolveRetry(String(gameState.kmyakBattleEventId || ''), 2500);
+      return;
+    }
     const eventId = String(gameState.kmyakBattleEventId || "");
-    if (!eventId || !window.dbRef) return;
+    if (!eventId || !gameState.activeKmyakBattle || gameState.kmyakBattlePhase !== 'battle') return;
 
     // 結果確定の担当が途中で止まると、以前の永久ロックが残って全端末が停止していた。
     // 12秒以上古いclaimは期限切れとして引き継ぎ可能にする。
@@ -4883,6 +4900,38 @@
     if (!document.hidden) syncStaleKmyakBattleOverlay();
   });
   window.addEventListener('focus', syncStaleKmyakBattleOverlay);
+
+  // 全端末共通の監視。イベント開始端末のJavaScriptタイマーが止まっても、
+  // Firebaseに保存された開始時刻を見て、別端末が結果確定を引き継ぐ。
+  let kmyakBattleWatchdogBusy = false;
+  setInterval(async () => {
+    if (!window.dbRef || kmyakBattleWatchdogBusy) return;
+    kmyakBattleWatchdogBusy = true;
+    try {
+      const { ref, get, db } = window.dbRef;
+      const snapshot = await get(ref(db, 'gameState'));
+      const latest = snapshot.val();
+      if (!latest) return;
+      const latestPhase = String(latest.kmyakBattlePhase || 'idle');
+      const latestEventId = String(latest.kmyakBattleEventId || '');
+      if (latest.activeKmyakBattle && latestPhase === 'battle' && latestEventId) {
+        // 通常5秒の連打時間に通信遅延分を加えた猶予を設ける。
+        const startedAt = Number(latest.kmyakBattleStartedAt || 0);
+        if (startedAt && Date.now() - startedAt >= 7500) {
+          gameState = latest;
+          await resolveKmyakBattleHost();
+        }
+      } else if (latest.activeKmyakBattle && latestPhase === 'result' && latestEventId) {
+        // 結果表示を受け取った全端末が復旧を試みる。transactionにより一度だけ確定。
+        gameState = latest;
+        scheduleKmyakResultRecovery();
+      }
+    } catch (e) {
+      console.warn('15マス目の監視処理を再試行します:', e);
+    } finally {
+      kmyakBattleWatchdogBusy = false;
+    }
+  }, 2000);
 
   function renderKmyakBattleOverlay() {
     const board = document.getElementById('board');

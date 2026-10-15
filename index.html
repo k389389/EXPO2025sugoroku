@@ -4923,8 +4923,15 @@
         }
       } else if (latest.activeKmyakBattle && latestPhase === 'result' && latestEventId) {
         // 結果表示を受け取った全端末が復旧を試みる。transactionにより一度だけ確定。
+        // タイマーがすでに設定済みでも、結果状態が長く残る場合は直接復旧を再試行する。
         gameState = latest;
         scheduleKmyakResultRecovery();
+        if (Number(latest.kmyakBattleResultRank) >= 1 &&
+            Number(latest.kmyakBattleResultRank) <= 4 &&
+            !kmyakRecoveryPromise) {
+          recoverStuckKmyakBattle(latestEventId).catch(e =>
+            console.warn('15マス目の終了処理を再試行します:', e));
+        }
       }
     } catch (e) {
       console.warn('15マス目の監視処理を再試行します:', e);
@@ -5979,8 +5986,22 @@
   }
 
   function syncGameState() {
-    const { ref, set, db } = window.dbRef;
-    set(ref(db, 'gameState'), gameState);
+    // 15マス目の連打イベント中は、古い端末状態でgameState全体をsetしない。
+    // set() は他端末の最新の連打数・結果・手番を丸ごと上書きし得るため、
+    // countdown/battle/result中はこの汎用同期を停止し、イベント専用transactionに任せる。
+    if (gameState && (gameState.activeKmyakBattle ||
+        ['countdown', 'battle', 'result'].includes(String(gameState.kmyakBattlePhase || 'idle')))) {
+      console.warn('15マス目イベント中の全体上書きを抑止しました。');
+      return;
+    }
+    const { ref, runTransaction, db } = window.dbRef;
+    // ローカルではイベント終了済みでも、Firebase側にイベントが残っていれば
+    // 古い状態を上書きしない。通常時のみ既存の同期動作を行う。
+    runTransaction(ref(db, 'gameState'), current => {
+      if (current && (current.activeKmyakBattle ||
+          ['countdown', 'battle', 'result'].includes(String(current.kmyakBattlePhase || 'idle')))) return;
+      return gameState;
+    }).catch(e => console.warn('ゲーム状態の同期に失敗しました:', e));
   }
 
   async function animateDice(targetValue) {
